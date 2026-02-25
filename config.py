@@ -17,33 +17,22 @@ LARK_BASE_URL   = os.environ.get("LARK_BASE_URL", "https://open.larksuite.com")
 LARK_CHAT_ID = os.environ.get("LARK_CHAT_ID", "")
 
 # =============================================================================
-# LARK BASE (app token) + TABLE IDs
-# Lark Base app token — from the Base URL:
-#   https://xxx.larksuite.com/base/<APP_TOKEN>
-# Table/board IDs — comma-separated list of table IDs within that Base
+# LARK BASE APP TOKEN
+# From your Base URL: https://xxx.larksuite.com/base/<APP_TOKEN>
+# All tables/boards inside are discovered automatically — no table IDs needed.
 # =============================================================================
 LARK_BASE_APP_TOKEN = os.environ.get("LARK_BASE_APP_TOKEN", "")
-LARK_BASE_TABLE_IDS = [
-    t.strip()
-    for t in os.environ.get("LARK_BASE_TABLE_IDS", "").split(",")
-    if t.strip()
-]
 
 # =============================================================================
-# FIELD NAMES (as they appear in Lark Base)
+# FIELD NAMES (must match exactly as they appear in your Lark Base columns)
 # =============================================================================
-FIELD_ORDER_NUM        = "Order #"
-FIELD_ORDER_DATE       = "Order Date"
-FIELD_DUE_DATE         = "Due Date"
-FIELD_STATUS           = "Status"
-FIELD_DESCRIPTION      = "Description"
-FIELD_ADDRESS          = "Address"
-FIELD_TRACKING_NUMBER  = "Tracking Number"
-FIELD_CARRIER          = "Carrier"
-FIELD_QTY_ORDERED      = "Quantity Ordered"
-FIELD_QTY_SHIPPED      = "Quantity Shipped"
-FIELD_DATE_SHIPPED     = "Date Shipped"
-FIELD_LAST_UPDATED     = "Last Updated"
+FIELD_ORDER_NUM       = "Order #"
+FIELD_ORDER_DATE      = "Order Date"
+FIELD_DUE_DATE        = "Due Date"
+FIELD_STATUS          = "Status"
+FIELD_DESCRIPTION     = "Description"
+FIELD_ADDRESS         = "Address"
+FIELD_QTY_ORDERED     = "Quantity Ordered"
 
 # =============================================================================
 # BOT SETTINGS
