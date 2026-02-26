@@ -20,7 +20,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 gemini_model = None
 gemini_model_name = None
-for _name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"]:
+for _name in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
     try:
         gemini_model = genai.GenerativeModel(_name)
         gemini_model_name = _name
