@@ -19,6 +19,8 @@ LARK_BASE_URL = os.environ.get("LARK_BASE_URL", "https://open.larksuite.com")
 # =============================================================================
 LARK_CHAT_ID_HANNAH = os.environ.get("LARK_CHAT_ID_HANNAH", "")
 LARK_CHAT_ID_LUCY = os.environ.get("LARK_CHAT_ID_LUCY", "")
+LARK_CHAT_ID_HANNAH_ARTWORK = os.environ.get("LARK_CHAT_ID_HANNAH_ARTWORK", "")
+LARK_CHAT_ID_LUCY_ARTWORK = os.environ.get("LARK_CHAT_ID_LUCY_ARTWORK", "")
 
 # =============================================================================
 # LARK BASE APP TOKEN
@@ -62,6 +64,8 @@ FIELD_STATUS = "Status"
 FIELD_DESCRIPTION = "Description"
 FIELD_ADDRESS = "Address"
 FIELD_QTY_ORDERED = "Quantity Ordered"
+FIELD_PRODUCTION_DRAWING = "Production Drawing"
+ARTWORK_CONFIRMED_STATUS = "Artwork Confirmed"
 
 # =============================================================================
 # BOT SETTINGS
@@ -84,4 +88,6 @@ WARNING_LABELS = {
 CHAT_ROUTING = {
     "hannah": LARK_CHAT_ID_HANNAH,
     "lucy": LARK_CHAT_ID_LUCY,
+    "hannah_artwork": LARK_CHAT_ID_HANNAH_ARTWORK,
+    "lucy_artwork": LARK_CHAT_ID_LUCY_ARTWORK,
 }
