@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-gemini_model_name = "gemini-2.0-flash-lite"
+gemini_model_name = "gemini-2.5-flash"
 logger.info("Gemini client ready, model: " + gemini_model_name)
 
 processed_message_ids = set()
@@ -223,7 +223,7 @@ def ask_gemini(question, projects, netsuite_data=None):
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
     )
-    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-001", "gemini-1.5-pro-001", "gemini-1.5-flash-001"]
+    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001", "gemini-2.5-pro"]
     last_error = None
     for model in models_to_try:
         try:
