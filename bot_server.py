@@ -353,6 +353,16 @@ def debug():
     return jsonify(result)
 
 
+@app.route("/list-models", methods=["GET"])
+def list_models():
+    try:
+        models = gemini_client.models.list()
+        model_names = [m.name for m in models]
+        return jsonify({"models": model_names, "count": len(model_names)})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
