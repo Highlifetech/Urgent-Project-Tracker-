@@ -453,6 +453,23 @@ def list_models():
         return jsonify({"error": str(e)})
 
 
+@app.route("/list-chats", methods=["GET"])
+def list_chats():
+    try:
+        import requests as req
+        url = lark.base_url + "/open-apis/im/v1/chats"
+        params = {"page_size": 100}
+        resp = req.get(url, headers=lark._headers(), params=params, timeout=30)
+        data = resp.json()
+        if data.get("code") != 0:
+            return jsonify({"error": data})
+        chats = data.get("data", {}).get("items", [])
+        result = [{"chat_id": c.get("chat_id"), "name": c.get("name", "")} for c in chats]
+        return jsonify({"chats": result, "count": len(result)})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
