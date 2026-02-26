@@ -34,12 +34,12 @@ lark = LarkClient()
 netsuite = NetSuiteClient()
 
 # -------------------------------------------------------------------------
-# Cache — avoid re-fetching Lark data on every message
+# Cache
 # -------------------------------------------------------------------------
 _cache_lock = threading.Lock()
 _cached_projects = []
 _cache_timestamp = 0
-CACHE_TTL = 300  # seconds (5 minutes)
+CACHE_TTL = 300
 
 
 def fetch_all_projects(force=False):
@@ -47,18 +47,16 @@ def fetch_all_projects(force=False):
     with _cache_lock:
         age = time.time() - _cache_timestamp
         if not force and _cached_projects and age < CACHE_TTL:
-            logger.info("Using cached project data (" + str(int(age)) + "s old, " + str(len(_cached_projects)) + " records)")
+            logger.info("Using cached data (" + str(int(age)) + "s old, " + str(len(_cached_projects)) + " records)")
             return _cached_projects
 
     projects = []
     try:
         tables = lark.get_all_tables()
-        logger.info("Found " + str(len(tables)) + " tables")
     except Exception as e:
         logger.error("Failed to get tables: " + str(e))
         with _cache_lock:
-            return _cached_projects  # return stale cache on error rather than empty
-
+            return _cached_projects
     for table in tables:
         tid = table["table_id"]
         tname = table.get("name", "Unknown")
@@ -68,23 +66,20 @@ def fetch_all_projects(force=False):
                 fields = dict(raw.get("fields", {}))
                 fields["__table_name__"] = tname
                 projects.append(fields)
-            logger.info("Table " + tname + ": " + str(len(records)) + " records")
         except Exception as e:
             logger.error("Failed table " + tname + ": " + str(e))
-
     with _cache_lock:
         _cached_projects = projects
         _cache_timestamp = time.time()
-    logger.info("Cache refreshed: " + str(len(projects)) + " total records")
+    logger.info("Cache refreshed: " + str(len(projects)) + " records")
     return projects
 
 
 def _refresh_cache_background():
-    """Refresh cache in a background thread so the next request is fast."""
     try:
         fetch_all_projects(force=True)
     except Exception as e:
-        logger.error("Background cache refresh failed: " + str(e))
+        logger.error("Background refresh failed: " + str(e))
 
 
 def field_to_text(val):
@@ -110,26 +105,17 @@ def field_to_text(val):
 
 
 def filter_relevant_projects(question, projects):
-    """Only send records relevant to the question to Gemini — much faster."""
     q = question.lower()
-
-    # Keywords to filter by table name or field content
-    keywords = [w for w in q.split() if len(w) > 3]
-
-    # Always include if question is broad
     broad = any(w in q for w in ["all", "every", "list", "show", "overview", "summary", "status"])
+    keywords = [w for w in q.split() if len(w) > 3]
     if broad or not keywords:
-        return projects[:200]  # cap at 200 records max
-
-    # Filter by keyword match in table name or any field value
+        return projects[:200]
     relevant = []
     for p in projects:
         tname = p.get("__table_name__", "").lower()
         row_text = " ".join(str(v) for v in p.values()).lower()
         if any(kw in tname or kw in row_text for kw in keywords):
             relevant.append(p)
-
-    # If nothing matched, fall back to all (capped)
     return relevant[:200] if relevant else projects[:200]
 
 
@@ -147,31 +133,79 @@ def build_context(projects):
     return "\n".join(lines)
 
 
-def detect_netsuite_query(question):
+# -------------------------------------------------------------------------
+# NetSuite query detection and routing
+# -------------------------------------------------------------------------
+
+def detect_netsuite_type(question):
+    """Returns 'shipping', 'address', 'balance', 'aged', or None."""
     q = question.lower()
-    shipping_keywords = [
-        "ship", "tracking", "shipment", "transit", "order status",
-        "fulfillment", "so-", "sales order", "netsuite", "shipped",
-        "delivery", "carrier", "fedex", "ups", "usps", "dhl", "in transit"
-    ]
-    return any(kw in q for kw in shipping_keywords)
+
+    balance_keywords = ["balance", "owe", "owes", "owed", "invoice", "invoices", "outstanding", "ar ", "accounts receivable", "how much", "payment due", "overdue", "aged", "past due"]
+    address_keywords = ["address", "where to ship", "ship to", "shipping address", "deliver to", "where does", "where should"]
+    shipping_keywords = ["tracking", "shipment", "shipped", "in transit", "carrier", "fedex", "ups", "usps", "dhl", "fulfillment", "order status", "delivery status"]
+
+    if any(kw in q for kw in balance_keywords):
+        if any(kw in q for kw in ["aged", "past due", "overdue", "30", "60", "90"]):
+            return "aged"
+        return "balance"
+    if any(kw in q for kw in address_keywords):
+        return "address"
+    if any(kw in q for kw in shipping_keywords):
+        return "shipping"
+    return None
 
 
-def fetch_netsuite_shipping(question):
+def extract_entity(question):
+    """Try to pull an order number or customer name from the question."""
     so_match = re.search(r'\bso[\s\-]?(\d+)\b', question, re.IGNORECASE)
-    order_num = so_match.group(0).replace(" ", "-").upper() if so_match else None
+    if so_match:
+        return so_match.group(0).replace(" ", "-").upper()
     num_match = re.search(r'\b(\d{4,})\b', question)
-    if not order_num and num_match:
-        order_num = num_match.group(1)
+    if num_match:
+        return num_match.group(1)
+    return None
+
+
+def fetch_netsuite_data(question):
+    """Route to the right NetSuite query based on question type."""
+    query_type = detect_netsuite_type(question)
+    if not query_type:
+        return None
+
+    entity = extract_entity(question)
+    logger.info("NetSuite query type: " + query_type + ", entity: " + str(entity))
+
     try:
-        if order_num:
-            data = netsuite.get_shipment_by_order(order_num)
-        else:
-            data = netsuite.get_recent_shipments()
-        return data
+        if query_type == "shipping":
+            if entity:
+                return netsuite.get_shipment_by_order(entity)
+            return netsuite.get_recent_shipments()
+
+        elif query_type == "address":
+            term = entity
+            if not term:
+                # Try to extract a customer/order name from the question
+                words = [w for w in question.split() if len(w) > 3 and w.lower() not in ["where", "ship", "address", "does", "should", "what", "the", "for"]]
+                term = " ".join(words[:3]) if words else None
+            if term:
+                return netsuite.get_ship_address(term)
+            return netsuite.get_recent_shipments()
+
+        elif query_type == "balance":
+            # Try to extract customer name
+            words = [w for w in question.split() if len(w) > 3 and w.lower() not in ["balance", "owed", "owes", "much", "what", "how", "does", "their", "have", "client"]]
+            customer = " ".join(words[:3]) if words else None
+            return netsuite.get_customer_balance(customer)
+
+        elif query_type == "aged":
+            return netsuite.get_aged_receivables()
+
     except Exception as e:
-        logger.error("NetSuite error: " + str(e))
+        logger.error("NetSuite fetch error: " + str(e))
         return {"error": str(e)}
+
+    return None
 
 
 def ask_gemini(question, projects, netsuite_data=None):
@@ -180,20 +214,20 @@ def ask_gemini(question, projects, netsuite_data=None):
 
     relevant = filter_relevant_projects(question, projects)
     context = build_context(relevant)
-    logger.info("Sending " + str(len(relevant)) + " records to Gemini (filtered from " + str(len(projects)) + ")")
 
     netsuite_section = ""
     if netsuite_data:
         if "error" in netsuite_data:
-            netsuite_section = "\n--- NETSUITE DATA ---\nError: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
+            netsuite_section = "\n--- NETSUITE DATA ---\nError fetching data: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
         else:
-            netsuite_section = "\n--- NETSUITE SHIPPING DATA ---\n" + json.dumps(netsuite_data, indent=2)[:3000] + "\n--- END NETSUITE ---\n"
+            netsuite_section = "\n--- NETSUITE DATA ---\n" + json.dumps(netsuite_data, indent=2)[:4000] + "\n--- END NETSUITE ---\n"
 
     prompt = (
-        "You are IRON BOT — the HLT (Highlife Tech) Production Assistant for all things production, projects, shipping, and operations.\n"
+        "You are IRON BOT — the HLT (Highlife Tech) Production Assistant for production, projects, shipping, addresses, and client balances.\n"
         "Board ownership: tables with Lucy in the name belong to Lucy, Hannah to Hannah, everything else to Brendan.\n"
-        "Be helpful and concise. Use bullet points for lists. Highlight overdue or urgent items.\n"
-        "If asked about shipping or orders, use NetSuite data. For production boards and tasks, use Lark data.\n\n"
+        "Be helpful and concise. Use bullet points. Highlight overdue or urgent items.\n"
+        "For shipping, tracking, addresses and client balances, use the NetSuite data provided.\n"
+        "For production boards and project tasks, use the Lark data.\n\n"
         "--- LARK PROJECT DATA ---\n" + context + "\n--- END LARK DATA ---\n"
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
@@ -249,18 +283,17 @@ def webhook():
         return jsonify({"code": 0})
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id)
 
-    # Fetch Lark data and NetSuite data in parallel using threads
     netsuite_data = None
-    netsuite_result = {}
     projects_result = {}
+    netsuite_result = {}
 
     def get_lark():
         projects_result["data"] = fetch_all_projects()
 
     def get_netsuite():
-        if detect_netsuite_query(user_text):
-            logger.info("NetSuite query detected")
-            netsuite_result["data"] = fetch_netsuite_shipping(user_text)
+        data = fetch_netsuite_data(user_text)
+        if data:
+            netsuite_result["data"] = data
 
     t1 = threading.Thread(target=get_lark)
     t2 = threading.Thread(target=get_netsuite)
@@ -282,7 +315,6 @@ def webhook():
     except Exception as e:
         logger.error("Send failed: " + str(e))
 
-    # Pre-warm cache in background so next question is even faster
     cache_age = time.time() - _cache_timestamp
     if cache_age > CACHE_TTL * 0.8:
         threading.Thread(target=_refresh_cache_background, daemon=True).start()
@@ -292,7 +324,6 @@ def webhook():
 
 @app.route("/refresh", methods=["GET"])
 def refresh():
-    """Force a cache refresh."""
     threading.Thread(target=_refresh_cache_background, daemon=True).start()
     return jsonify({"status": "cache refresh triggered"})
 
