@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-gemini_model_name = "gemini-2.0-flash"
+gemini_model_name = "gemini-2.0-flash-lite"
 logger.info("Gemini client ready, model: " + gemini_model_name)
 
 processed_message_ids = set()
@@ -223,14 +223,18 @@ def ask_gemini(question, projects, netsuite_data=None):
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
     )
-    try:
-        resp = gemini_client.models.generate_content(model=gemini_model_name, contents=prompt)
-        answer = resp.text.strip()
-        logger.info("Gemini replied: " + str(len(answer)) + " chars")
-        return answer
-    except Exception as e:
-        logger.error("Gemini error: " + str(e))
-        return "AI error: " + str(e)[:300]
+    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-001", "gemini-1.5-pro-001", "gemini-1.5-flash-001"]
+    last_error = None
+    for model in models_to_try:
+        try:
+            resp = gemini_client.models.generate_content(model=model, contents=prompt)
+            answer = resp.text.strip()
+            logger.info("Gemini replied using " + model + ": " + str(len(answer)) + " chars")
+            return answer
+        except Exception as e:
+            logger.warning("Model " + model + " failed: " + str(e)[:100])
+            last_error = e
+    return "AI error: " + str(last_error)[:300]
 
 
 def extract_question(msg):
