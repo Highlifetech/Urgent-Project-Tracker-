@@ -7,7 +7,7 @@ import threading
 import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from google import genai
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model_name = "gemini-1.5-pro-latest"
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+gemini_model_name = "gemini-2.0-flash"
 logger.info("Gemini client ready, model: " + gemini_model_name)
 
 processed_message_ids = set()
@@ -224,7 +224,7 @@ def ask_gemini(question, projects, netsuite_data=None):
         "\nQuestion: " + question + "\nAnswer:"
     )
     try:
-        resp = genai.GenerativeModel(gemini_model_name).generate_content(prompt)
+        resp = gemini_client.models.generate_content(model=gemini_model_name, contents=prompt)
         answer = resp.text.strip()
         logger.info("Gemini replied: " + str(len(answer)) + " chars")
         return answer
@@ -327,7 +327,7 @@ def debug():
     result["env_base_token"] = bool(os.environ.get("LARK_BASE_APP_TOKEN"))
     result["base_token_value"] = os.environ.get("LARK_BASE_APP_TOKEN", "")[:8] + "..."
     result["lark_base_url"] = os.environ.get("LARK_BASE_URL", "not set")
-    result["gemini_ready"] = bool(GEMINI_API_KEY)
+    result["gemini_ready"] = gemini_client is not None
     result["gemini_model"] = gemini_model_name
     result["netsuite_configured"] = bool(os.environ.get("NETSUITE_ACCOUNT_ID"))
     result["cache_records"] = len(_cached_projects)
