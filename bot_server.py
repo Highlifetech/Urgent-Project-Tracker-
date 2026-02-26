@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-gemini_model_name = "gemini-2.0-flash"
+gemini_model_name = "gemini-1.5-pro"
 logger.info("Gemini client ready, model: " + gemini_model_name)
 
 processed_message_ids = set()
