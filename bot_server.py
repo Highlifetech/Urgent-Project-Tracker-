@@ -2,6 +2,8 @@ import os
 import logging
 import json
 import re
+import time
+import threading
 import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
@@ -31,15 +33,32 @@ processed_message_ids = set()
 lark = LarkClient()
 netsuite = NetSuiteClient()
 
+# -------------------------------------------------------------------------
+# Cache — avoid re-fetching Lark data on every message
+# -------------------------------------------------------------------------
+_cache_lock = threading.Lock()
+_cached_projects = []
+_cache_timestamp = 0
+CACHE_TTL = 300  # seconds (5 minutes)
 
-def fetch_all_projects():
+
+def fetch_all_projects(force=False):
+    global _cached_projects, _cache_timestamp
+    with _cache_lock:
+        age = time.time() - _cache_timestamp
+        if not force and _cached_projects and age < CACHE_TTL:
+            logger.info("Using cached project data (" + str(int(age)) + "s old, " + str(len(_cached_projects)) + " records)")
+            return _cached_projects
+
     projects = []
     try:
         tables = lark.get_all_tables()
         logger.info("Found " + str(len(tables)) + " tables")
     except Exception as e:
         logger.error("Failed to get tables: " + str(e))
-        return projects
+        with _cache_lock:
+            return _cached_projects  # return stale cache on error rather than empty
+
     for table in tables:
         tid = table["table_id"]
         tname = table.get("name", "Unknown")
@@ -52,8 +71,20 @@ def fetch_all_projects():
             logger.info("Table " + tname + ": " + str(len(records)) + " records")
         except Exception as e:
             logger.error("Failed table " + tname + ": " + str(e))
-    logger.info("Total records: " + str(len(projects)))
+
+    with _cache_lock:
+        _cached_projects = projects
+        _cache_timestamp = time.time()
+    logger.info("Cache refreshed: " + str(len(projects)) + " total records")
     return projects
+
+
+def _refresh_cache_background():
+    """Refresh cache in a background thread so the next request is fast."""
+    try:
+        fetch_all_projects(force=True)
+    except Exception as e:
+        logger.error("Background cache refresh failed: " + str(e))
 
 
 def field_to_text(val):
@@ -76,6 +107,30 @@ def field_to_text(val):
         except Exception:
             pass
     return str(val).strip() or "N/A"
+
+
+def filter_relevant_projects(question, projects):
+    """Only send records relevant to the question to Gemini — much faster."""
+    q = question.lower()
+
+    # Keywords to filter by table name or field content
+    keywords = [w for w in q.split() if len(w) > 3]
+
+    # Always include if question is broad
+    broad = any(w in q for w in ["all", "every", "list", "show", "overview", "summary", "status"])
+    if broad or not keywords:
+        return projects[:200]  # cap at 200 records max
+
+    # Filter by keyword match in table name or any field value
+    relevant = []
+    for p in projects:
+        tname = p.get("__table_name__", "").lower()
+        row_text = " ".join(str(v) for v in p.values()).lower()
+        if any(kw in tname or kw in row_text for kw in keywords):
+            relevant.append(p)
+
+    # If nothing matched, fall back to all (capped)
+    return relevant[:200] if relevant else projects[:200]
 
 
 def build_context(projects):
@@ -122,7 +177,10 @@ def fetch_netsuite_shipping(question):
 def ask_gemini(question, projects, netsuite_data=None):
     if not gemini_model:
         return "AI model not available. Check GEMINI_API_KEY."
-    context = build_context(projects)
+
+    relevant = filter_relevant_projects(question, projects)
+    context = build_context(relevant)
+    logger.info("Sending " + str(len(relevant)) + " records to Gemini (filtered from " + str(len(projects)) + ")")
 
     netsuite_section = ""
     if netsuite_data:
@@ -132,13 +190,10 @@ def ask_gemini(question, projects, netsuite_data=None):
             netsuite_section = "\n--- NETSUITE SHIPPING DATA ---\n" + json.dumps(netsuite_data, indent=2)[:3000] + "\n--- END NETSUITE ---\n"
 
     prompt = (
-        "You are the HLT (Highlife Tech) Production Assistant — a general-purpose bot for all things production, projects, shipping, and operations at Highlife Tech.\n"
-        "You have access to ALL Lark Base boards and NetSuite shipping data.\n"
+        "You are IRON BOT — the HLT (Highlife Tech) Production Assistant for all things production, projects, shipping, and operations.\n"
         "Board ownership: tables with Lucy in the name belong to Lucy, Hannah to Hannah, everything else to Brendan.\n"
         "Be helpful and concise. Use bullet points for lists. Highlight overdue or urgent items.\n"
-        "If asked about shipping, tracking or orders, prioritize NetSuite data.\n"
-        "If asked about production boards, tasks or projects, use Lark data.\n"
-        "You can answer general production and operations questions even if specific data is not available.\n\n"
+        "If asked about shipping or orders, use NetSuite data. For production boards and tasks, use Lark data.\n\n"
         "--- LARK PROJECT DATA ---\n" + context + "\n--- END LARK DATA ---\n"
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
@@ -194,12 +249,29 @@ def webhook():
         return jsonify({"code": 0})
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id)
 
+    # Fetch Lark data and NetSuite data in parallel using threads
     netsuite_data = None
-    if detect_netsuite_query(user_text):
-        logger.info("NetSuite query detected")
-        netsuite_data = fetch_netsuite_shipping(user_text)
+    netsuite_result = {}
+    projects_result = {}
 
-    projects = fetch_all_projects()
+    def get_lark():
+        projects_result["data"] = fetch_all_projects()
+
+    def get_netsuite():
+        if detect_netsuite_query(user_text):
+            logger.info("NetSuite query detected")
+            netsuite_result["data"] = fetch_netsuite_shipping(user_text)
+
+    t1 = threading.Thread(target=get_lark)
+    t2 = threading.Thread(target=get_netsuite)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    projects = projects_result.get("data", [])
+    netsuite_data = netsuite_result.get("data")
+
     if not projects and not netsuite_data:
         answer = "Could not load project data. Check bot access to Lark Base."
     else:
@@ -209,7 +281,20 @@ def webhook():
         lark.send_response(answer, chat_id=chat_id)
     except Exception as e:
         logger.error("Send failed: " + str(e))
+
+    # Pre-warm cache in background so next question is even faster
+    cache_age = time.time() - _cache_timestamp
+    if cache_age > CACHE_TTL * 0.8:
+        threading.Thread(target=_refresh_cache_background, daemon=True).start()
+
     return jsonify({"code": 0})
+
+
+@app.route("/refresh", methods=["GET"])
+def refresh():
+    """Force a cache refresh."""
+    threading.Thread(target=_refresh_cache_background, daemon=True).start()
+    return jsonify({"status": "cache refresh triggered"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -223,6 +308,8 @@ def debug():
     result["gemini_ready"] = gemini_model is not None
     result["gemini_model"] = gemini_model_name
     result["netsuite_configured"] = bool(os.environ.get("NETSUITE_ACCOUNT_ID"))
+    result["cache_records"] = len(_cached_projects)
+    result["cache_age_seconds"] = int(time.time() - _cache_timestamp)
 
     try:
         token = lark._get_tenant_token()
@@ -242,7 +329,7 @@ def debug():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "gemini_model": gemini_model_name})
+    return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
 
 
 if __name__ == "__main__":
