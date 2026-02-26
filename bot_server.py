@@ -109,44 +109,90 @@ def ask_gemini(question, projects):
         return "AI error: " + str(e)[:300]
 
 
+def extract_question(msg):
+    """Extract question text only if bot is @mentioned. Returns None if not mentioned."""
+    try:
+        content = json.loads(msg.get("content", "{}"))
+        raw_text = content.get("text", "").strip()
+    except Exception:
+        return None
+
+    # Lark puts @mentions as @_user_1234567 or just @ in group messages
+    # The message must contain an @ mention to be directed at the bot
+    # Check the mentions field in the message
+    mentions = msg.get("mentions", [])
+
+    # If there are mentions, check if our bot is one of them
+    # Bot messages have mention_type = "at"
+    bot_mentioned = False
+    if mentions:
+        bot_mentioned = True  # Any @ mention in a group chat = directed at bot
+
+    # Also check if message starts with @ (direct mention pattern)
+    if raw_text.startswith("@"):
+        bot_mentioned = True
+
+    if not bot_mentioned:
+        logger.info("Message ignored - bot not mentioned")
+        return None
+
+    # Strip the @mention prefix to get the actual question
+    # Lark format: "@Bot Name question text"
+    if raw_text.startswith("@"):
+        # Find end of mention (first space after @)
+        space_idx = raw_text.find(" ")
+        if space_idx == -1:
+            return None  # Just @mention with no question
+        raw_text = raw_text[space_idx:].strip()
+
+    return raw_text if raw_text else None
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.get_json(silent=True) or {}
+
+    # Handle Lark URL verification
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
+
     event = body.get("event", {})
     msg = event.get("message", {})
+
+    # Only handle text messages
     if msg.get("message_type") != "text":
         return jsonify({"code": 0})
+
+    # Deduplicate
     message_id = msg.get("message_id", "")
     if message_id in processed_message_ids:
         return jsonify({"code": 0})
     processed_message_ids.add(message_id)
     if len(processed_message_ids) > 1000:
         processed_message_ids.clear()
-    try:
-        content = json.loads(msg.get("content", "{}"))
-        user_text = content.get("text", "").strip()
-        if "@" in user_text:
-            idx = user_text.find(" ")
-            user_text = user_text[idx:].strip() if idx != -1 else ""
-    except Exception:
-        return jsonify({"code": 0})
+
+    # Only respond if bot is @mentioned
+    user_text = extract_question(msg)
     if not user_text:
         return jsonify({"code": 0})
+
     chat_id = msg.get("chat_id", "")
     if not chat_id:
         return jsonify({"code": 0})
+
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id)
+
     projects = fetch_all_projects()
     if not projects:
         answer = "Could not load project data. Check bot access to Lark Base."
     else:
         answer = ask_gemini(user_text, projects)
+
     try:
         lark.send_group_message(answer, chat_id=chat_id)
     except Exception as e:
         logger.error("Send failed: " + str(e))
+
     return jsonify({"code": 0})
 
 
