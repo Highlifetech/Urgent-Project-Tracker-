@@ -27,6 +27,9 @@ logger.info("Gemini client ready, model: " + gemini_model_name)
 processed_message_ids = {}
 DEDUP_TTL = 300
 
+# Store last webhook payloads for debugging
+_last_webhooks = []
+
 lark = LarkClient()
 netsuite = NetSuiteClient()
 
@@ -273,28 +276,13 @@ def handle_artwork_approval(order_num, user_text, chat_id):
             f"{file_msg}")
 
 # -------------------------------------------------------------------------
-# Message parsing - only respond when bot is truly @mentioned
+# Message parsing - STRICT: only respond when bot is 100% @mentioned
 # -------------------------------------------------------------------------
-def is_bot_mentioned(msg):
-    """Check if the bot's own app ID appears in the mentions list."""
-    mentions = msg.get("mentions", [])
-    if not mentions:
-        return False
-    for mention in mentions:
-        # Lark mention objects have 'id' with 'open_id' or 'union_id',
-        # and also 'key' like '@_user_1' for the bot.
-        # The most reliable check: mention type is 'app' or the id matches our app
-        mid = mention.get("id", {})
-        if mention.get("key", "") == "@_user_1":
-            return True
-        if mid.get("open_id", "") == LARK_APP_ID:
-            return True
-        # Some Lark setups use union_id
-        if LARK_APP_ID and LARK_APP_ID in str(mention):
-            return True
-    return False
-
 def extract_question(msg):
+    """
+    Returns the question text ONLY if the bot was directly @mentioned.
+    Logs the full mention data so we can debug.
+    """
     try:
         content = json.loads(msg.get("content", "{}"))
         raw_text = content.get("text", "").strip()
@@ -302,17 +290,40 @@ def extract_question(msg):
         return None
     if not raw_text:
         return None
-    # In direct messages (p2p chats), always respond
-    # In group chats, only respond if bot is @mentioned
-    chat_type = msg.get("chat_type", "")
-    if chat_type == "p2p":
+
+    mentions = msg.get("mentions", [])
+    logger.info("Mentions received: " + json.dumps(mentions))
+    logger.info("Raw text: " + repr(raw_text[:100]))
+
+    # Direct/P2P chat: always respond (no @mention needed)
+    if msg.get("chat_type", "") == "p2p":
         return raw_text
-    # Group chat: must be @mentioned
-    if not is_bot_mentioned(msg):
+
+    # Group chat: ONLY respond if the bot itself is in the mentions list
+    # Lark marks the bot mention with key="@_user_1" in the mentions array
+    # and the mention appears as @IronBot or similar in the text
+    bot_mentioned = False
+    for mention in mentions:
+        key = mention.get("key", "")
+        name = mention.get("name", "")
+        logger.info("Checking mention: key=" + key + " name=" + name)
+        # Bot mentions have key "@_user_1" — human mentions use "@_user_2", "@_user_3" etc.
+        # OR the name matches "Iron Bot" / "IronBot"
+        if key == "@_user_1":
+            bot_mentioned = True
+            break
+        if "iron" in name.lower() or "bot" in name.lower():
+            bot_mentioned = True
+            break
+
+    if not bot_mentioned:
+        logger.info("Bot NOT mentioned - ignoring message")
         return None
-    # Strip the @IronBot mention from the text
-    # Lark embeds mentions as special tokens; strip leading @mention text
-    cleaned = re.sub(r'^@[^\s]+\s*', '', raw_text).strip()
+
+    # Strip the @mention prefix from the text before passing to AI
+    # Lark text looks like: "@IronBot what orders are pending?"
+    cleaned = re.sub(r'^@\S+\s*', '', raw_text).strip()
+    logger.info("Bot IS mentioned - question: " + repr(cleaned[:100]))
     return cleaned if cleaned else None
 
 def _is_already_processed(message_id):
@@ -364,33 +375,59 @@ def _process_message(user_text, chat_id, artwork_order):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.get_json(silent=True) or {}
+
+    # Store for debugging (keep last 5)
+    _last_webhooks.append(body)
+    if len(_last_webhooks) > 5:
+        _last_webhooks.pop(0)
+
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
-    # Log raw event type for debugging
-    header = body.get("header", {})
-    event_type = header.get("event_type", body.get("type", "unknown"))
+
     event = body.get("event", {})
     msg = event.get("message", {})
+
     if msg.get("message_type") != "text":
         return jsonify({"code": 0})
+
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
         logger.info("Duplicate message ignored: " + message_id)
         return jsonify({"code": 0})
+
     user_text = extract_question(msg)
     if not user_text:
         return jsonify({"code": 0})
+
     chat_id = msg.get("chat_id", "")
     if not chat_id:
         return jsonify({"code": 0})
+
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id)
     artwork_order = detect_artwork_approval(user_text)
+
     threading.Thread(
         target=_process_message,
         args=(user_text, chat_id, artwork_order),
         daemon=True
     ).start()
+
     return jsonify({"code": 0})
+
+@app.route("/last-webhook", methods=["GET"])
+def last_webhook():
+    """Show last 5 webhook payloads for debugging mention structure."""
+    safe = []
+    for body in _last_webhooks:
+        event = body.get("event", {})
+        msg = event.get("message", {})
+        safe.append({
+            "chat_type": msg.get("chat_type"),
+            "message_type": msg.get("message_type"),
+            "mentions": msg.get("mentions", []),
+            "content_preview": msg.get("content", "")[:100],
+        })
+    return jsonify({"last_webhooks": safe, "count": len(safe)})
 
 @app.route("/refresh", methods=["GET"])
 def refresh():
@@ -404,8 +441,7 @@ def debug():
     result["env_app_secret"] = bool(os.environ.get("LARK_APP_SECRET"))
     result["env_base_token"] = bool(os.environ.get("LARK_BASE_APP_TOKEN"))
     result["base_token_value"] = os.environ.get("LARK_BASE_APP_TOKEN", "")[:8] + "..."
-    result["lark_base_url"] = os.environ.get("LARK_BASE_URL", "not set")
-    result["lark_app_id"] = LARK_APP_ID[:8] + "..." if LARK_APP_ID else "not set"
+    result["lark_app_id_prefix"] = LARK_APP_ID[:8] + "..." if LARK_APP_ID else "not set"
     result["gemini_ready"] = gemini_client is not None
     result["gemini_model"] = gemini_model_name
     result["netsuite_configured"] = bool(os.environ.get("NETSUITE_ACCOUNT_ID"))
@@ -418,10 +454,9 @@ def debug():
         result["auth"] = "FAILED: " + str(e)
     try:
         tables = lark.get_all_tables()
-        result["tables"] = [t["name"] for t in tables]
         result["table_count"] = len(tables)
     except Exception as e:
-        result["tables"] = "FAILED: " + str(e)
+        result["table_count"] = "FAILED: " + str(e)
     return jsonify(result)
 
 @app.route("/list-models", methods=["GET"])
@@ -452,19 +487,6 @@ def list_chats():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
-
-@app.route("/test-mention", methods=["POST"])
-def test_mention():
-    """Debug endpoint: post a fake message body to check if bot would respond."""
-    body = request.get_json(silent=True) or {}
-    msg = body.get("message", {})
-    result = {
-        "chat_type": msg.get("chat_type"),
-        "mentions": msg.get("mentions", []),
-        "is_bot_mentioned": is_bot_mentioned(msg),
-        "extracted_question": extract_question(msg),
-    }
-    return jsonify(result)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
