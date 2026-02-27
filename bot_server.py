@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+LARK_APP_ID = os.environ.get("LARK_APP_ID", "")
 from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -123,7 +124,7 @@ def build_context(projects):
     return "\n".join(lines)
 
 # -------------------------------------------------------------------------
-# NetSuite query detection and routing
+# NetSuite
 # -------------------------------------------------------------------------
 def detect_netsuite_type(question):
     q = question.lower()
@@ -200,12 +201,7 @@ def ask_gemini(question, projects, netsuite_data=None):
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
     )
-    models_to_try = [
-        gemini_model_name,
-        "gemini-2.0-flash-lite",
-        "gemini-2.0-flash-lite-001",
-        "gemini-1.5-flash-8b",
-    ]
+    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001", "gemini-1.5-flash-8b"]
     last_error = None
     for model in models_to_try:
         try:
@@ -276,22 +272,48 @@ def handle_artwork_approval(order_num, user_text, chat_id):
             f"{status_msg}"
             f"{file_msg}")
 
+# -------------------------------------------------------------------------
+# Message parsing - only respond when bot is truly @mentioned
+# -------------------------------------------------------------------------
+def is_bot_mentioned(msg):
+    """Check if the bot's own app ID appears in the mentions list."""
+    mentions = msg.get("mentions", [])
+    if not mentions:
+        return False
+    for mention in mentions:
+        # Lark mention objects have 'id' with 'open_id' or 'union_id',
+        # and also 'key' like '@_user_1' for the bot.
+        # The most reliable check: mention type is 'app' or the id matches our app
+        mid = mention.get("id", {})
+        if mention.get("key", "") == "@_user_1":
+            return True
+        if mid.get("open_id", "") == LARK_APP_ID:
+            return True
+        # Some Lark setups use union_id
+        if LARK_APP_ID and LARK_APP_ID in str(mention):
+            return True
+    return False
+
 def extract_question(msg):
     try:
         content = json.loads(msg.get("content", "{}"))
         raw_text = content.get("text", "").strip()
     except Exception:
         return None
-    mentions = msg.get("mentions", [])
-    bot_mentioned = bool(mentions) or raw_text.startswith("@")
-    if not bot_mentioned:
+    if not raw_text:
         return None
-    if raw_text.startswith("@"):
-        space_idx = raw_text.find(" ")
-        if space_idx == -1:
-            return None
-        raw_text = raw_text[space_idx:].strip()
-    return raw_text if raw_text else None
+    # In direct messages (p2p chats), always respond
+    # In group chats, only respond if bot is @mentioned
+    chat_type = msg.get("chat_type", "")
+    if chat_type == "p2p":
+        return raw_text
+    # Group chat: must be @mentioned
+    if not is_bot_mentioned(msg):
+        return None
+    # Strip the @IronBot mention from the text
+    # Lark embeds mentions as special tokens; strip leading @mention text
+    cleaned = re.sub(r'^@[^\s]+\s*', '', raw_text).strip()
+    return cleaned if cleaned else None
 
 def _is_already_processed(message_id):
     now = time.time()
@@ -344,6 +366,9 @@ def webhook():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
+    # Log raw event type for debugging
+    header = body.get("header", {})
+    event_type = header.get("event_type", body.get("type", "unknown"))
     event = body.get("event", {})
     msg = event.get("message", {})
     if msg.get("message_type") != "text":
@@ -380,6 +405,7 @@ def debug():
     result["env_base_token"] = bool(os.environ.get("LARK_BASE_APP_TOKEN"))
     result["base_token_value"] = os.environ.get("LARK_BASE_APP_TOKEN", "")[:8] + "..."
     result["lark_base_url"] = os.environ.get("LARK_BASE_URL", "not set")
+    result["lark_app_id"] = LARK_APP_ID[:8] + "..." if LARK_APP_ID else "not set"
     result["gemini_ready"] = gemini_client is not None
     result["gemini_model"] = gemini_model_name
     result["netsuite_configured"] = bool(os.environ.get("NETSUITE_ACCOUNT_ID"))
@@ -426,6 +452,19 @@ def list_chats():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
+
+@app.route("/test-mention", methods=["POST"])
+def test_mention():
+    """Debug endpoint: post a fake message body to check if bot would respond."""
+    body = request.get_json(silent=True) or {}
+    msg = body.get("message", {})
+    result = {
+        "chat_type": msg.get("chat_type"),
+        "mentions": msg.get("mentions", []),
+        "is_bot_mentioned": is_bot_mentioned(msg),
+        "extracted_question": extract_question(msg),
+    }
+    return jsonify(result)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
