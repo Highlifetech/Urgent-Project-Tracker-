@@ -17,11 +17,15 @@ app = Flask(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS
+
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 gemini_model_name = "gemini-2.5-flash"
 logger.info("Gemini client ready, model: " + gemini_model_name)
 
-processed_message_ids = set()
+# Deduplication: dict of {message_id: timestamp}
+processed_message_ids = {}
+DEDUP_TTL = 300
+
 lark = LarkClient()
 netsuite = NetSuiteClient()
 
@@ -33,7 +37,6 @@ _cached_projects = []
 _cache_timestamp = 0
 CACHE_TTL = 300
 
-
 def fetch_all_projects(force=False):
     global _cached_projects, _cache_timestamp
     with _cache_lock:
@@ -41,7 +44,6 @@ def fetch_all_projects(force=False):
         if not force and _cached_projects and age < CACHE_TTL:
             logger.info("Using cached data (" + str(int(age)) + "s old, " + str(len(_cached_projects)) + " records)")
             return _cached_projects
-
     projects = []
     try:
         tables = lark.get_all_tables()
@@ -66,13 +68,11 @@ def fetch_all_projects(force=False):
     logger.info("Cache refreshed: " + str(len(projects)) + " records")
     return projects
 
-
 def _refresh_cache_background():
     try:
         fetch_all_projects(force=True)
     except Exception as e:
         logger.error("Background refresh failed: " + str(e))
-
 
 def field_to_text(val):
     if val is None:
@@ -95,7 +95,6 @@ def field_to_text(val):
             pass
     return str(val).strip() or "N/A"
 
-
 def filter_relevant_projects(question, projects):
     q = question.lower()
     broad = any(w in q for w in ["all", "every", "list", "show", "overview", "summary", "status"])
@@ -110,7 +109,6 @@ def filter_relevant_projects(question, projects):
             relevant.append(p)
     return relevant[:200] if relevant else projects[:200]
 
-
 def build_context(projects):
     today = datetime.now(timezone.utc)
     lines = ["Today is " + today.strftime("%A %B %d %Y") + ".", "Total records: " + str(len(projects)), ""]
@@ -124,19 +122,14 @@ def build_context(projects):
         lines.append(" | ".join(parts))
     return "\n".join(lines)
 
-
 # -------------------------------------------------------------------------
 # NetSuite query detection and routing
 # -------------------------------------------------------------------------
-
 def detect_netsuite_type(question):
-    """Returns 'shipping', 'address', 'balance', 'aged', or None."""
     q = question.lower()
-
     balance_keywords = ["balance", "owe", "owes", "owed", "invoice", "invoices", "outstanding", "ar ", "accounts receivable", "how much", "payment due", "overdue", "aged", "past due"]
     address_keywords = ["address", "where to ship", "ship to", "shipping address", "deliver to", "where does", "where should"]
     shipping_keywords = ["tracking", "shipment", "shipped", "in transit", "carrier", "fedex", "ups", "usps", "dhl", "fulfillment", "order status", "delivery status"]
-
     if any(kw in q for kw in balance_keywords):
         if any(kw in q for kw in ["aged", "past due", "overdue", "30", "60", "90"]):
             return "aged"
@@ -147,9 +140,7 @@ def detect_netsuite_type(question):
         return "shipping"
     return None
 
-
 def extract_entity(question):
-    """Try to pull an order number or customer name from the question."""
     so_match = re.search(r'\bso[\s\-]?(\d+)\b', question, re.IGNORECASE)
     if so_match:
         return so_match.group(0).replace(" ", "-").upper()
@@ -158,62 +149,47 @@ def extract_entity(question):
         return num_match.group(1)
     return None
 
-
 def fetch_netsuite_data(question):
-    """Route to the right NetSuite query based on question type."""
     query_type = detect_netsuite_type(question)
     if not query_type:
         return None
-
     entity = extract_entity(question)
     logger.info("NetSuite query type: " + query_type + ", entity: " + str(entity))
-
     try:
         if query_type == "shipping":
             if entity:
                 return netsuite.get_shipment_by_order(entity)
             return netsuite.get_recent_shipments()
-
         elif query_type == "address":
             term = entity
             if not term:
-                # Try to extract a customer/order name from the question
                 words = [w for w in question.split() if len(w) > 3 and w.lower() not in ["where", "ship", "address", "does", "should", "what", "the", "for"]]
                 term = " ".join(words[:3]) if words else None
             if term:
                 return netsuite.get_ship_address(term)
             return netsuite.get_recent_shipments()
-
         elif query_type == "balance":
-            # Try to extract customer name
             words = [w for w in question.split() if len(w) > 3 and w.lower() not in ["balance", "owed", "owes", "much", "what", "how", "does", "their", "have", "client"]]
             customer = " ".join(words[:3]) if words else None
             return netsuite.get_customer_balance(customer)
-
         elif query_type == "aged":
             return netsuite.get_aged_receivables()
-
     except Exception as e:
         logger.error("NetSuite fetch error: " + str(e))
         return {"error": str(e)}
-
     return None
-
 
 def ask_gemini(question, projects, netsuite_data=None):
     if not GEMINI_API_KEY:
         return "AI model not available. Check GEMINI_API_KEY."
-
     relevant = filter_relevant_projects(question, projects)
     context = build_context(relevant)
-
     netsuite_section = ""
     if netsuite_data:
         if "error" in netsuite_data:
             netsuite_section = "\n--- NETSUITE DATA ---\nError fetching data: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
         else:
             netsuite_section = "\n--- NETSUITE DATA ---\n" + json.dumps(netsuite_data, indent=2)[:4000] + "\n--- END NETSUITE ---\n"
-
     prompt = (
         "You are IRON BOT — the HLT (Highlife Tech) Production Assistant for production, projects, shipping, addresses, and client balances.\n"
         "Board ownership: tables with Lucy in the name belong to Lucy, Hannah to Hannah, everything else to Brendan.\n"
@@ -224,7 +200,12 @@ def ask_gemini(question, projects, netsuite_data=None):
         + netsuite_section +
         "\nQuestion: " + question + "\nAnswer:"
     )
-    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001", "gemini-2.5-pro"]
+    models_to_try = [
+        gemini_model_name,
+        "gemini-2.0-flash-lite",
+        "gemini-2.0-flash-lite-001",
+        "gemini-1.5-flash-8b",
+    ]
     last_error = None
     for model in models_to_try:
         try:
@@ -237,46 +218,30 @@ def ask_gemini(question, projects, netsuite_data=None):
             last_error = e
     return "AI error: " + str(last_error)[:300]
 
-
-
 # -------------------------------------------------------------------------
-# Artwork Approval Detection and Handling
+# Artwork Approval
 # -------------------------------------------------------------------------
-
 def detect_artwork_approval(text):
-    """Detect if the message is an artwork approval command. Returns order number or None.
-    Works from ANY Lark channel the bot is in."""
     t = text.lower()
-    # Must mention artwork and approval/confirm
-    if ("artwork" in t) and ("approv" in t or "confirm" in t):
-        # Extract order number like HLT6021, HLT-6021, hlt 6021, HLT 6021
+    if ("artwork" in t or "art" in t) and ("approv" in t or "confirm" in t or "approved" in t):
         match = re.search(r'hlt[\s\-]?(\d+)', text, re.IGNORECASE)
         if match:
             return "HLT" + match.group(1)
     return None
 
-
 def handle_artwork_approval(order_num, user_text, chat_id):
-    """Find the order, grab the latest artwork from Hannah/Lucy artwork chat, update the record."""
     logger.info(f"Artwork approval for order: {order_num}")
-
-    # Determine which artwork chat to use based on context or try both
     artwork_chats = []
     if LARK_CHAT_ID_HANNAH_ARTWORK:
         artwork_chats.append(("Hannah", LARK_CHAT_ID_HANNAH_ARTWORK))
     if LARK_CHAT_ID_LUCY_ARTWORK:
         artwork_chats.append(("Lucy", LARK_CHAT_ID_LUCY_ARTWORK))
-
-    # Try to find the record first
     record = lark.find_record_by_order_num(order_num)
     if not record:
-        return f"❌ Could not find order **{order_num}** in any Lark Base table. Please check the order number."
-
+        return f"Could not find order {order_num} in any Lark Base table. Please check the order number."
     table_id = record["table_id"]
     record_id = record["record_id"]
     table_name = record["table_name"]
-
-    # Find the most recent artwork file from artwork chats
     file_info = {}
     source_name = ""
     for name, chat in artwork_chats:
@@ -288,34 +253,28 @@ def handle_artwork_approval(order_num, user_text, chat_id):
                 break
         except Exception as e:
             logger.error(f"Error fetching from {name} artwork chat: {e}")
-
-    # Update Status to Artwork Confirmed
     try:
         lark.update_record_fields(table_id, record_id, {"Status": ARTWORK_CONFIRMED_STATUS})
-        status_msg = f"✅ Status updated to **{ARTWORK_CONFIRMED_STATUS}**"
+        status_msg = f"Status updated to {ARTWORK_CONFIRMED_STATUS}"
     except Exception as e:
         logger.error(f"Failed to update status: {e}")
-        status_msg = f"⚠️ Status update failed: {str(e)[:100]}"
-
-    # Upload artwork file if found
+        status_msg = f"Status update failed: {str(e)[:100]}"
     file_msg = ""
     if file_info and file_info.get("file_key"):
         try:
             file_bytes = lark.download_file_from_message(file_info["message_id"], file_info["file_key"])
             file_name = file_info.get("file_name", "artwork.png")
             lark.upload_file_to_record(table_id, record_id, FIELD_PRODUCTION_DRAWING, file_bytes, file_name)
-            file_msg = f"\n📎 Artwork from **{source_name}**'s chat uploaded to **Production Drawing** field"
+            file_msg = f"\nArtwork from {source_name}'s chat uploaded to Production Drawing field"
         except Exception as e:
             logger.error(f"Failed to upload artwork file: {e}")
-            file_msg = f"\n⚠️ Could not upload artwork file: {str(e)[:100]}"
+            file_msg = f"\nCould not upload artwork file: {str(e)[:100]}"
     else:
-        file_msg = f"\n⚠️ No artwork file found in artwork chats — status updated but no file attached"
-
-    return (f"🎨 **Order {order_num}** — Artwork Approved!\n"
-            f"📋 Table: {table_name}\n"
+        file_msg = "\nNo artwork file found in artwork chats - status updated but no file attached"
+    return (f"Order {order_num} - Artwork Approved!\n"
+            f"Table: {table_name}\n"
             f"{status_msg}"
             f"{file_msg}")
-
 
 def extract_question(msg):
     try:
@@ -334,6 +293,51 @@ def extract_question(msg):
         raw_text = raw_text[space_idx:].strip()
     return raw_text if raw_text else None
 
+def _is_already_processed(message_id):
+    now = time.time()
+    expired = [mid for mid, ts in list(processed_message_ids.items()) if now - ts > DEDUP_TTL]
+    for mid in expired:
+        del processed_message_ids[mid]
+    if message_id in processed_message_ids:
+        return True
+    processed_message_ids[message_id] = now
+    return False
+
+def _process_message(user_text, chat_id, artwork_order):
+    if artwork_order:
+        answer = handle_artwork_approval(artwork_order, user_text, chat_id)
+        try:
+            lark.send_response(answer, chat_id=chat_id)
+        except Exception as e:
+            logger.error("Send failed: " + str(e))
+        return
+    netsuite_result = {}
+    projects_result = {}
+    def get_lark():
+        projects_result["data"] = fetch_all_projects()
+    def get_netsuite():
+        data = fetch_netsuite_data(user_text)
+        if data:
+            netsuite_result["data"] = data
+    t1 = threading.Thread(target=get_lark)
+    t2 = threading.Thread(target=get_netsuite)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    projects = projects_result.get("data", [])
+    netsuite_data = netsuite_result.get("data")
+    if not projects and not netsuite_data:
+        answer = "Could not load project data. Check bot access to Lark Base."
+    else:
+        answer = ask_gemini(user_text, projects, netsuite_data)
+    try:
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error("Send failed: " + str(e))
+    cache_age = time.time() - _cache_timestamp
+    if cache_age > CACHE_TTL * 0.8:
+        threading.Thread(target=_refresh_cache_background, daemon=True).start()
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -345,11 +349,9 @@ def webhook():
     if msg.get("message_type") != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
-    if message_id in processed_message_ids:
+    if _is_already_processed(message_id):
+        logger.info("Duplicate message ignored: " + message_id)
         return jsonify({"code": 0})
-    processed_message_ids.add(message_id)
-    if len(processed_message_ids) > 1000:
-        processed_message_ids.clear()
     user_text = extract_question(msg)
     if not user_text:
         return jsonify({"code": 0})
@@ -357,62 +359,18 @@ def webhook():
     if not chat_id:
         return jsonify({"code": 0})
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id)
-
-    # Check for artwork approval command first
     artwork_order = detect_artwork_approval(user_text)
-    if artwork_order:
-        answer = handle_artwork_approval(artwork_order, user_text, chat_id)
-        try:
-            lark.send_response(answer, chat_id=chat_id)
-        except Exception as e:
-            logger.error("Send failed: " + str(e))
-        return jsonify({"code": 0})
-
-
-    netsuite_data = None
-    projects_result = {}
-    netsuite_result = {}
-
-    def get_lark():
-        projects_result["data"] = fetch_all_projects()
-
-    def get_netsuite():
-        data = fetch_netsuite_data(user_text)
-        if data:
-            netsuite_result["data"] = data
-
-    t1 = threading.Thread(target=get_lark)
-    t2 = threading.Thread(target=get_netsuite)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-
-    projects = projects_result.get("data", [])
-    netsuite_data = netsuite_result.get("data")
-
-    if not projects and not netsuite_data:
-        answer = "Could not load project data. Check bot access to Lark Base."
-    else:
-        answer = ask_gemini(user_text, projects, netsuite_data)
-
-    try:
-        lark.send_response(answer, chat_id=chat_id)
-    except Exception as e:
-        logger.error("Send failed: " + str(e))
-
-    cache_age = time.time() - _cache_timestamp
-    if cache_age > CACHE_TTL * 0.8:
-        threading.Thread(target=_refresh_cache_background, daemon=True).start()
-
+    threading.Thread(
+        target=_process_message,
+        args=(user_text, chat_id, artwork_order),
+        daemon=True
+    ).start()
     return jsonify({"code": 0})
-
 
 @app.route("/refresh", methods=["GET"])
 def refresh():
     threading.Thread(target=_refresh_cache_background, daemon=True).start()
     return jsonify({"status": "cache refresh triggered"})
-
 
 @app.route("/debug", methods=["GET"])
 def debug():
@@ -427,22 +385,18 @@ def debug():
     result["netsuite_configured"] = bool(os.environ.get("NETSUITE_ACCOUNT_ID"))
     result["cache_records"] = len(_cached_projects)
     result["cache_age_seconds"] = int(time.time() - _cache_timestamp)
-
     try:
         token = lark._get_tenant_token()
         result["auth"] = "OK - token length " + str(len(token))
     except Exception as e:
         result["auth"] = "FAILED: " + str(e)
-
     try:
         tables = lark.get_all_tables()
         result["tables"] = [t["name"] for t in tables]
         result["table_count"] = len(tables)
     except Exception as e:
         result["tables"] = "FAILED: " + str(e)
-
     return jsonify(result)
-
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
@@ -452,7 +406,6 @@ def list_models():
         return jsonify({"models": model_names, "count": len(model_names)})
     except Exception as e:
         return jsonify({"error": str(e)})
-
 
 @app.route("/list-chats", methods=["GET"])
 def list_chats():
@@ -470,11 +423,9 @@ def list_chats():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "gemini_model": gemini_model_name, "cache_records": len(_cached_projects)})
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
