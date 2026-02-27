@@ -244,12 +244,13 @@ def ask_gemini(question, projects, netsuite_data=None):
 # -------------------------------------------------------------------------
 
 def detect_artwork_approval(text):
-    """Detect if the message is an artwork approval command. Returns order number or None."""
+    """Detect if the message is an artwork approval command. Returns order number or None.
+    Works from ANY Lark channel the bot is in."""
     t = text.lower()
-    if ("artwork" in t or "art" in t) and ("approv" in t or "confirm" in t or "approved" in t):
-        # Extract order number like HLT6021, HLT-6021, hlt 6021
-        import re
-        match = re.search(r'hlt[s-]?(d+)', text, re.IGNORECASE)
+    # Must mention artwork and approval/confirm
+    if ("artwork" in t) and ("approv" in t or "confirm" in t):
+        # Extract order number like HLT6021, HLT-6021, hlt 6021, HLT 6021
+        match = re.search(r'hlt[\s\-]?(\d+)', text, re.IGNORECASE)
         if match:
             return "HLT" + match.group(1)
     return None
