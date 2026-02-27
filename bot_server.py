@@ -448,7 +448,7 @@ def debug():
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
         "env_base_token": bool(os.environ.get("LARK_BASE_APP_TOKEN")),
         "auth": "OK - token length " + str(len(lark._headers().get("Authorization", ""))) if lark._headers() else "FAIL",
-        "table_count": len(lark.get_all_records()) if hasattr(lark, 'get_all_records') else "N/A",
+        "table_count": "N/A",
         "cache_records": len(lark._cache) if hasattr(lark, '_cache') else 0,
         "cache_age_seconds": int(time.time() - lark._cache_time) if hasattr(lark, '_cache_time') and lark._cache_time else None,
         "bot_open_id": BOT_OPEN_ID,
