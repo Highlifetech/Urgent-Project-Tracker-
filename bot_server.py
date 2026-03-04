@@ -7,7 +7,7 @@ import threading
 import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-from google import genai
+import anthropic
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 
@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LARK_APP_ID = os.environ.get("LARK_APP_ID", "")
 BOT_NAME = os.environ.get("BOT_NAME", "Iron Bot")  # Set to the bot's display name in Lark
 from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS
@@ -24,9 +24,8 @@ from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-gemini_model_name = "gemini-2.5-flash"
-logger.info("Gemini client ready, model: " + gemini_model_name)
+anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+logger.info("Anthropic/Claude client ready")
 
 # Deduplication: dict of {message_id: timestamp}
 processed_message_ids = {}
@@ -214,78 +213,85 @@ def fetch_all_projects():
 
 
 # -------------------------------------------------------------------------
-# Gemini
+# Claude AI
 # -------------------------------------------------------------------------
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan"):
-    if not GEMINI_API_KEY:
-        return "AI model not available. Check GEMINI_API_KEY."
+
+def ask_claude(question, projects, netsuite_data=None, scope="brendan"):
+    if not ANTHROPIC_API_KEY:
+        return "AI not available. Check ANTHROPIC_API_KEY."
+
     relevant = filter_relevant_projects(question, projects)
     context = build_context(relevant)
+
     netsuite_section = ""
     if netsuite_data:
         if "error" in netsuite_data:
-            netsuite_section = "\n--- NETSUITE DATA ---\nError fetching data: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
+            netsuite_section = "\n--- NETSUITE DATA ---\nError: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
         else:
             netsuite_section = "\n--- NETSUITE DATA ---\n" + json.dumps(netsuite_data, indent=2)[:4000] + "\n--- END NETSUITE ---\n"
 
-    # Scope instruction for the prompt
     if scope == "hannah":
-        scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention or reveal details about Lucy's or Brendan's projects.\n"
+        scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
     elif scope == "lucy":
-        scope_instruction = "IMPORTANT: You are speaking with Lucy. Only discuss Lucy's projects and boards. Do not mention or reveal details about Hannah's or Brendan's projects.\n"
+        scope_instruction = "IMPORTANT: You are speaking with Lucy. Only discuss Lucy's projects and boards. Do not mention Hannah's or Brendan's projects.\n"
     else:
         scope_instruction = ""
 
-    prompt = (
+    system_prompt = (
         scope_instruction +
-        "You are IRON BOT — the HLT (Highlife Tech) Production Assistant for production, projects, shipping, addresses, and client balances.\n"
-        "Board ownership: tables with Lucy in the name belong to Lucy, Hannah to Hannah, everything else to Brendan.\n"
-        "Be helpful and concise. Use bullet points. Highlight overdue or urgent items.\n"
-        "For shipping, tracking, addresses and client balances, use the NetSuite data provided.\n"
-        "For production boards and project tasks, use the Lark data.\n"
-        "\n"
-        "FIELD NAME NOTES:\n"
-        "- The 'Due Date' field in the data means 'In Hand Date' — the date the order must be delivered/in hand by the client. Always call it 'In Hand Date' in responses, never 'Due Date'.\n"
-        "- Timestamps are Unix milliseconds — always convert to readable dates (e.g. Feb 27 2026) in answers.\n"
-        "\n"
-        "ALL STATUS VALUES (complete list — case-sensitive):\n"
-        "- 'WAITING ART' = awaiting artwork design, not yet paid. Include for 'awaiting artwork' queries.\n"
-        "- 'PAID/WAITING ART' = paid and awaiting artwork design. Also include for 'awaiting artwork' queries.\n"
-        "- 'QUOTE NEEDED' = needs a price quote only. NOT artwork — never include for artwork queries.\n"
-        "- 'QUOTE ADDED' = quote provided, awaiting client decision.\n"
-        "- 'ARTWORK CONFIRMED' = artwork approved, ready for production.\n"
-        "- 'PART CONFIRMED' = order partially confirmed.\n"
-        "- 'PLATING' = in production, plating stage.\n"
-        "- 'POLISHING' = in production, polishing stage.\n"
-        "- 'PART SHIPPED' = partially shipped.\n"
-        "- 'SHIPPED' = completed and shipped.\n"
-        "- 'RESOLVED/SHIPPED' = issue resolved and order shipped.\n"
-        "- 'NEEDS RESOLUTION' = active problem with this order.\n"
-        "\n"
-        "FILTERING RULES (follow strictly):\n"
-        "- 'awaiting artwork' / 'needs artwork' → ONLY 'WAITING ART' or 'PAID/WAITING ART'\n"
-        "- 'needs quote' / 'quote needed' → ONLY 'QUOTE NEEDED'\n"
-        "- 'in production' → 'PLATING', 'POLISHING', or 'PART CONFIRMED'\n"
-        "- 'shipped' / 'done' / 'complete' → 'SHIPPED' or 'RESOLVED/SHIPPED'\n"
-        "- 'issues' / 'problems' → 'NEEDS RESOLUTION'\n"
-        "\n"
-        "--- LARK PROJECT DATA ---\n" + context + "\n--- END LARK DATA ---\n"
-        + netsuite_section +
-        "\nQuestion: " + question + "\nAnswer:"
+        "You are IRON BOT — the HLT (Highlife Tech) company assistant. "
+        "You have access to live production, project, shipping, and client data.\n\n"
+        "RESPONSE RULES (follow strictly):\n"
+        "- Give ONLY the final answer. Never show your reasoning or thinking process.\n"
+        "- Never say 'let me re-check' or 're-evaluate' or explain your logic.\n"
+        "- Be concise and direct. Use bullet points for lists.\n"
+        "- Highlight urgent or overdue items clearly.\n"
+        "- If nothing matches, say so in one sentence.\n\n"
+        "FIELD NOTES:\n"
+        "- 'Due Date' in data = 'In Hand Date' (date client needs delivery). Always call it 'In Hand Date'.\n"
+        "- Timestamps are Unix milliseconds — convert to readable dates in all answers.\n"
+        "- Board ownership: tables with 'Lucy' = Lucy's, 'Hannah' = Hannah's, else Brendan's.\n\n"
+        "STATUS VALUES:\n"
+        "- WAITING ART = awaiting artwork, not yet paid\n"
+        "- PAID/WAITING ART = paid, awaiting artwork\n"
+        "- QUOTE NEEDED = needs price quote only (NOT artwork)\n"
+        "- QUOTE ADDED = quote provided, awaiting decision\n"
+        "- ARTWORK CONFIRMED = artwork approved, ready for production\n"
+        "- PART CONFIRMED = partially confirmed\n"
+        "- PLATING = in production, plating stage\n"
+        "- POLISHING = in production, polishing stage\n"
+        "- PART SHIPPED = partially shipped\n"
+        "- SHIPPED = completed and shipped\n"
+        "- RESOLVED/SHIPPED = resolved and shipped\n"
+        "- NEEDS RESOLUTION = active problem\n\n"
+        "FILTERING RULES:\n"
+        "- 'awaiting artwork' = ONLY WAITING ART or PAID/WAITING ART\n"
+        "- 'needs quote' = ONLY QUOTE NEEDED\n"
+        "- 'in production' = PLATING, POLISHING, or PART CONFIRMED\n"
+        "- 'shipped/done' = SHIPPED or RESOLVED/SHIPPED\n"
+        "- 'issues/problems' = NEEDS RESOLUTION\n"
     )
-    models_to_try = [gemini_model_name, "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001", "gemini-1.5-flash-8b"]
-    last_error = None
-    for model in models_to_try:
-        try:
-            resp = gemini_client.models.generate_content(model=model, contents=prompt)
-            answer = resp.text.strip()
-            logger.info("Gemini replied using " + model + ": " + str(len(answer)) + " chars")
-            return answer
-        except Exception as e:
-            logger.warning("Model " + model + " failed: " + str(e)[:100])
-            last_error = e
-    return "AI error: " + str(last_error)[:300]
 
+    user_message = (
+        "--- LARK PROJECT DATA ---\n" + context +
+        "\n--- END LARK DATA ---\n" +
+        netsuite_section +
+        "\nQuestion: " + question
+    )
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}]
+        )
+        answer = response.content[0].text.strip()
+        logger.info("Claude replied: " + str(len(answer)) + " chars")
+        return answer
+    except Exception as e:
+        logger.error("Claude error: " + str(e))
+        return "AI error: " + str(e)[:200]
 
 # -------------------------------------------------------------------------
 # Artwork Approval
@@ -376,7 +382,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     if not scoped_projects and not netsuite_data:
         answer = "Could not load project data. Check bot access to Lark Base."
     else:
-        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope)
+        answer = ask_claude(user_text, scoped_projects, netsuite_data, scope=scope)
     try:
         lark.send_response(answer, chat_id=chat_id)
     except Exception as e:
@@ -500,8 +506,8 @@ def last_webhook():
 @app.route("/debug", methods=["GET"])
 def debug():
     return jsonify({
-        "gemini_ready": bool(GEMINI_API_KEY),
-        "gemini_model": gemini_model_name,
+        "claude_ready": bool(ANTHROPIC_API_KEY),
+        "claude_model": "claude-sonnet-4-5",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
@@ -520,12 +526,7 @@ def debug():
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
-    try:
-        models = gemini_client.models.list()
-        model_names = [m.name for m in models]
-        return jsonify({"models": model_names, "count": len(model_names)})
-    except Exception as e:
-        return jsonify({"error": str(e)})
+    return jsonify({"model": "claude-sonnet-4-5", "provider": "Anthropic"})
 
 
 @app.route("/list-chats", methods=["GET"])
@@ -571,7 +572,7 @@ def test_netsuite():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": gemini_model_name})
+    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "claude-sonnet-4-5"})
 
 
 @app.route("/sample-data", methods=["GET"])
