@@ -310,10 +310,10 @@ class LarkClient:
         }, app_token)
 
     def update_record_status(self, record: dict, new_status: str, field_name: str = None, app_token: str = None) -> bool:
-            """Update the status field on a Lark Base record. Called by bot_server for artwork approval."""
-            table_id = record.get("table_id", "")
-            record_id = record.get("record_id", "")
-            if not table_id or not record_id:
-                            raise Exception(f"update_record_status: missing table_id or record_id in record dict: {record}")
-                        status_field = field_name or "Status"
-            return self.update_record_fields(table_id, record_id, {status_field: new_status}, app_token)
+        """Update the status field on a Lark Base record. Called by bot_server for artwork approval."""
+        table_id = record.get("table_id", "")
+        record_id = record.get("record_id", "")
+        if not table_id or not record_id:
+            raise Exception(f"update_record_status: missing table_id or record_id in record dict: {record}")
+        status_field = field_name or "Status"
+        return self.update_record_fields(table_id, record_id, {status_field: new_status}, app_token)
