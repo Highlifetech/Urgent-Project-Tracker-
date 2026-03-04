@@ -377,7 +377,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     t2.join()
     projects = projects_result.get("data", [])
     netsuite_data = netsuite_result.get("data")
-    # Apply user scope filter BEFORE passing to Gemini
+    # Apply user scope filter BEFORE passing to Claude
     scoped_projects = filter_projects_by_scope(projects, scope)
     if not scoped_projects and not netsuite_data:
         answer = "Could not load project data. Check bot access to Lark Base."
