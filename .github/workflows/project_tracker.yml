@@ -2,16 +2,13 @@ name: Project Due Date Tracker
 
 on:
   schedule:
-    # 8:00 AM UTC  (adjust to your timezone if needed — UTC-5 EST = 13:00 UTC)
     - cron: '0 13 * * *'
-    # 8:00 PM UTC
     - cron: '0 1 * * *'
-  workflow_dispatch:  # allows manual trigger from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   check-due-dates:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,10 +23,23 @@ jobs:
 
       - name: Run project due date tracker
         env:
-          LARK_APP_ID:           ${{ secrets.LARK_APP_ID }}
-          LARK_APP_SECRET:       ${{ secrets.LARK_APP_SECRET }}
-          LARK_BASE_URL:         ${{ secrets.LARK_BASE_URL }}
-          LARK_CHAT_ID:          ${{ secrets.LARK_CHAT_ID }}
-          LARK_BASE_APP_TOKEN:   ${{ secrets.LARK_BASE_APP_TOKEN }}
-          LARK_BASE_TABLE_IDS:   ${{ secrets.LARK_BASE_TABLE_IDS }}
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_BASE_URL: ${{ secrets.LARK_BASE_URL }}
+          LARK_BASE_APP_TOKEN: ${{ secrets.LARK_BASE_APP_TOKEN }}
+          LARK_CHAT_ID_HANNAH: ${{ secrets.LARK_CHAT_ID_HANNAH }}
+          LARK_CHAT_ID_LUCY: ${{ secrets.LARK_CHAT_ID_LUCY }}
+          LARK_CHAT_ID_CHEN: ${{ secrets.LARK_CHAT_ID_CHEN }}
+          LARK_CHAT_ID_MASTER: ${{ secrets.LARK_CHAT_ID_MASTER }}
+          LARK_CHAT_ID_HANNAH_ARTWORK: ${{ secrets.LARK_CHAT_ID_HANNAH_ARTWORK }}
+          LARK_CHAT_ID_LUCY_ARTWORK: ${{ secrets.LARK_CHAT_ID_LUCY_ARTWORK }}
+          LARK_CHAT_ID_SHIPMENTS_LUCY: ${{ secrets.LARK_CHAT_ID_SHIPMENTS_LUCY }}
+          LARK_CHAT_ID_HLT_DESIGN: ${{ secrets.LARK_CHAT_ID_HLT_DESIGN }}
+          LARK_CHAT_ID_ORDER_ISSUES_HANNAH: ${{ secrets.LARK_CHAT_ID_ORDER_ISSUES_HANNAH }}
+          LARK_CHAT_ID_ORDER_ISSUES_LUCY: ${{ secrets.LARK_CHAT_ID_ORDER_ISSUES_LUCY }}
+          LARK_CHAT_ID_QUOTES_HANNAH: ${{ secrets.LARK_CHAT_ID_QUOTES_HANNAH }}
+          LARK_CHAT_ID_QUOTES_LUCY: ${{ secrets.LARK_CHAT_ID_QUOTES_LUCY }}
+          LARK_CHAT_ID_SAMPLES_LUCY: ${{ secrets.LARK_CHAT_ID_SAMPLES_LUCY }}
+          LARK_CHAT_ID_HLT_CARLO: ${{ secrets.LARK_CHAT_ID_HLT_CARLO }}
+          LARK_CHAT_ID_HLT_INBOUND: ${{ secrets.LARK_CHAT_ID_HLT_INBOUND }}
         run: python main.py
