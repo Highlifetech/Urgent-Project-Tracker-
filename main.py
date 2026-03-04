@@ -1,4 +1,4 @@
-"""
+—→→→→🟡🟠🔴—•"""
 Lark Project Due Date Tracker — Main Entry Point
 
 Runs twice daily (8am + 8pm EST via GitHub Actions cron).
