@@ -201,6 +201,36 @@ class LarkClient:
         return json.dumps(card)
 
 
+        def send_alert_card(self, message: str, chat_id: str = None):
+                    """Send an alert card (red header) to a Lark group chat."""
+                    if not chat_id:
+                                    logger.warning("No chat_id provided, skipping alert")
+                                    return
+                                url = f"{self.base_url}/open-apis/im/v1/messages"
+                    params = {"receive_id_type": "chat_id"}
+                    body = {
+                                    "receive_id": chat_id,
+                                    "msg_type": "interactive",
+                                    "content": self._build_alert_card(message),
+                    }
+                    resp = requests.post(url, headers=self._headers(), params=params, json=body, timeout=30)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("code") != 0:
+                                    raise Exception(f"Failed to send alert: {data}")
+                                logger.info(f"Alert sent to chat {chat_id}")
+
+        def _build_alert_card(self, text_content: str) -> str:
+                    card = {
+                                    "config": {"wide_screen_mode": True},
+                                    "header": {
+                                                        "title": {"tag": "plain_text", "content": "Shipment Alert"},
+                                                        "template": "red",
+                                    },
+                                    "elements": [{"tag": "markdown", "content": text_content}],
+                    }
+                    return json.dumps(card)
+
     # -------------------------------------------------------------------------
     # Artwork Approval Methods
     # -------------------------------------------------------------------------
