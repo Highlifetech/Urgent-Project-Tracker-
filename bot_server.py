@@ -409,7 +409,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
 
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-1.5-pro",
             system_instruction=system_prompt,
         )
         response = model.generate_content(user_message)
@@ -646,7 +646,7 @@ def last_webhook():
 def debug():
     return jsonify({
         "gemini_ready": bool(GEMINI_API_KEY),
-        "gemini_model": "gemini-2.0-flash",
+        "gemini_model": "gemini-1.5-pro",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
@@ -665,7 +665,7 @@ def debug():
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
-    return jsonify({"model": "gemini-2.0-flash", "provider": "Google"})
+    return jsonify({"model": "gemini-1.5-pro", "provider": "Google"})
 
 
 @app.route("/list-chats", methods=["GET"])
@@ -711,7 +711,7 @@ def test_netsuite():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "gemini-2.0-flash"})
+    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "gemini-1.5-pro"})
 
 
 @app.route("/sample-data", methods=["GET"])
