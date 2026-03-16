@@ -37,4 +37,6 @@ jobs:
           LARK_CHAT_ID_LUCY: ${{ secrets.LARK_CHAT_ID_LUCY }}
           LARK_CHAT_ID_CHEN: ${{ secrets.LARK_CHAT_ID_CHEN }}
           LARK_CHAT_ID_MASTER: ${{ secrets.LARK_CHAT_ID_MASTER }}
+          LARK_SHIPMENT_TABLE_ID: ${{ secrets.LARK_SHIPMENT_TABLE_ID }}
+          LARK_SHIPMENT_TABLE_NAME: ${{ secrets.LARK_SHIPMENT_TABLE_NAME }}
         run: python shipment_tracker.py
