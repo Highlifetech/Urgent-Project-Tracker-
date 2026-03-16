@@ -1,26 +1,35 @@
-name: Project Due Date Tracker
+name: Iron Bot Morning Digest
 
 on:
   schedule:
-    - cron: '0 13 * * *'
-    - cron: '0 1 * * *'
-  workflow_dispatch:
+    - cron: '0 13 * * 1-5'   # 8am ET (UTC-5) Mon-Fri
+    - cron: '0 12 * * 1-5'   # 8am ET (UTC-4 daylight saving) Mon-Fri
+  workflow_dispatch:           # Allow manual trigger
 
 jobs:
+  morning-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning digest
+        run: |
+          curl -X POST \
+            -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --fail-with-body \
+            https://web-production-f965d.up.railway.app/morning-digest
+        timeout-minutes: 2
+
   check-due-dates:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install requests
-
       - name: Run project due date tracker
         env:
           LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
