@@ -11,7 +11,7 @@ import google.generativeai as genai
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelnae)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
