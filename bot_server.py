@@ -607,7 +607,7 @@ def webhook():
     scope = get_user_scope(sender_open_id)
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id + " scope=" + scope + " sender=" + sender_open_id)
 
-        artwork_order = detect_artwork_approval(user_text)
+    artwork_order = detect_artwork_approval(user_text)
     threading.Thread(
         target=_process_message,
         args=(user_text, chat_id, artwork_order, scope),
