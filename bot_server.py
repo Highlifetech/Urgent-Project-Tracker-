@@ -11,7 +11,7 @@ import google.generativeai as genai
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelnae)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
@@ -281,7 +281,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan"):
 
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.0-flash",
             system_instruction=system_prompt,
         )
         response = model.generate_content(user_message)
@@ -506,7 +506,7 @@ def last_webhook():
 def debug():
     return jsonify({
         "gemini_ready": bool(GEMINI_API_KEY),
-        "gemini_model": "gemini-1.5-flash",
+        "gemini_model": "gemini-2.0-flash",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
@@ -525,7 +525,7 @@ def debug():
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
-    return jsonify({"model": "gemini-1.5-flash", "provider": "Google"})
+    return jsonify({"model": "gemini-2.0-flash", "provider": "Google"})
 
 
 @app.route("/list-chats", methods=["GET"])
@@ -571,7 +571,7 @@ def test_netsuite():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "gemini-1.5-flash"})
+    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "gemini-2.0-flash"})
 
 
 @app.route("/sample-data", methods=["GET"])
