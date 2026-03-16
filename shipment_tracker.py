@@ -44,6 +44,10 @@ FIELD_EXPECTED_DELIVERY = "Expected Delivery"
 FIELD_ALERTED_STATUS    = "Alerted Status"
 FIELD_MONTH             = "Month"
 
+# Optional: set LARK_SHIPMENT_TABLE_ID as a GitHub secret to skip keyword search
+LARK_SHIPMENT_TABLE_ID = os.environ.get("LARK_SHIPMENT_TABLE_ID", "")
+LARK_SHIPMENT_TABLE_NAME = os.environ.get("LARK_SHIPMENT_TABLE_NAME", "")
+
 # Statuses that indicate a shipment needs attention
 ALERT_STATUSES = [
     "exception",
@@ -126,17 +130,43 @@ def mark_as_alerted(lark, table_id, record_id, status_text):
 # ---------------------------------------------------------------------------
 
 def find_shipment_table(lark, tables):
-    """Find the table that contains shipment/inbound tracking data."""
+    """Find the table that contains shipment/inbound tracking data.
+
+    First checks the LARK_SHIPMENT_TABLE_ID environment variable.
+    Falls back to searching by keyword in table names.
+    """
+    # Option 1: Use explicit table ID from env var
+    if LARK_SHIPMENT_TABLE_ID:
+        for table in tables:
+            if table["table_id"] == LARK_SHIPMENT_TABLE_ID:
+                logger.info(f"Using configured shipment table: {table['name']} ({table['table_id']})")
+                return table
+        # If not found in list, create a minimal record with just the ID
+        name = LARK_SHIPMENT_TABLE_NAME or LARK_SHIPMENT_TABLE_ID
+        logger.info(f"Using configured shipment table ID: {LARK_SHIPMENT_TABLE_ID}")
+        return {"table_id": LARK_SHIPMENT_TABLE_ID, "name": name}
+
+    # Option 2: Use explicit table name from env var
+    if LARK_SHIPMENT_TABLE_NAME:
+        name_lower = LARK_SHIPMENT_TABLE_NAME.lower()
+        for table in tables:
+            if table.get("name", "").lower() == name_lower:
+                logger.info(f"Found table by name: {table['name']} ({table['table_id']})")
+                return table
+
+    # Option 3: Keyword search in table names
     shipment_keywords = ["shipment", "inbound", "tracking", "delivery", "deliveries"]
     for table in tables:
         name_lower = table.get("name", "").lower()
         for kw in shipment_keywords:
             if kw in name_lower:
-                logger.info(f"Found shipment table: {table['name']} ({table['table_id']})")
+                logger.info(f"Found shipment table by keyword: {table['name']} ({table['table_id']})")
                 return table
+
     logger.warning("No shipment table found. Available tables:")
     for t in tables:
         logger.warning(f"  - {t['name']} ({t['table_id']})")
+    logger.warning("Tip: Set LARK_SHIPMENT_TABLE_ID or LARK_SHIPMENT_TABLE_NAME as a GitHub secret.")
     return None
 
 # ---------------------------------------------------------------------------
@@ -219,6 +249,7 @@ def main():
     shipment_table = find_shipment_table(lark, tables)
     if not shipment_table:
         logger.error("Could not find shipment tracking table. Exiting.")
+        logger.error("Set LARK_SHIPMENT_TABLE_ID or LARK_SHIPMENT_TABLE_NAME as a GitHub secret.")
         sys.exit(1)
 
     table_id   = shipment_table["table_id"]
