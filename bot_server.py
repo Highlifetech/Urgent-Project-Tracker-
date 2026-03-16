@@ -607,7 +607,12 @@ def webhook():
     scope = get_user_scope(sender_open_id)
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id + " scope=" + scope + " sender=" + sender_open_id)
 
-    artwork_order = detect_artwork_approval(user_text)
+    # Chat ID helper command
+    if "chat id" in user_text.lower() or "chatid" in user_text.lower():
+        lark.send_response(f"This chat ID is: `{chat_id}`", chat_id=chat_id)
+        return jsonify({"code": 0})
+
+        artwork_order = detect_artwork_approval(user_text)
     threading.Thread(
         target=_process_message,
         args=(user_text, chat_id, artwork_order, scope),
