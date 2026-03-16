@@ -642,7 +642,7 @@ def last_webhook():
 @app.route("/debug", methods=["GET"])
 def debug():
     return jsonify({
-        "claude_ready: bool(ANTHROPIC_API_KEY),
+        "claude_ready": bool(ANTHROPIC_API_KEY),
         "claude_model": "claude-3-5-haiku-20241022",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
