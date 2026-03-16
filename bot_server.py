@@ -830,9 +830,9 @@ def morning_digest():
         if provided != digest_secret:
             return jsonify({"error": "Unauthorized"}), 401
 
-    chat_id = os.environ.get("LARK_CHAT_ID_MASTER", "")
+    chat_id = os.environ.get("LARK_CHAT_ID_DIGEST") or os.environ.get("LARK_CHAT_ID_MASTER", "")
     if not chat_id:
-        return jsonify({"error": "LARK_CHAT_ID_MASTER not set"}), 500
+        return jsonify({"error": "LARK_CHAT_ID_DIGEST not set"}), 500
 
     try:
         projects = fetch_all_projects()
