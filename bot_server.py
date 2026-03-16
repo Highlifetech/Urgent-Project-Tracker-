@@ -10,6 +10,7 @@ from flask import Flask, request, jsonify
 import google.generativeai as genai
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
+from pipedrive_client import PipedriveClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ BOT_OPEN_ID = None
 
 lark = LarkClient()
 netsuite = NetSuiteClient()
+pipedrive = PipedriveClient()
 
 
 def _fetch_bot_open_id():
@@ -137,6 +139,51 @@ def build_context(projects):
 # -------------------------------------------------------------------------
 # NetSuite
 # -------------------------------------------------------------------------
+def detect_pipedrive_type(question):
+    q = question.lower()
+    deal_kw = ["deal", "deals", "pipeline", "quote", "proposal", "client stage", "won", "lost", "opportunity"]
+    contact_kw = ["contact", "person", "who is", "email for", "phone for"]
+    activity_kw = ["activity", "activities", "meeting", "call", "task", "follow up", "upcoming"]
+    revenue_kw = ["revenue", "won deals", "closed", "total sales", "how much have we made"]
+    if any(k in q for k in revenue_kw):
+        return "revenue"
+    if any(k in q for k in deal_kw):
+        return "deals"
+    if any(k in q for k in contact_kw):
+        return "contacts"
+    if any(k in q for k in activity_kw):
+        return "activities"
+    return None
+
+def fetch_pipedrive_data(question):
+    pd_type = detect_pipedrive_type(question)
+    if not pd_type:
+        return None
+    try:
+        if pd_type == "deals":
+            # Try to search by keyword first
+            words = [w for w in question.split() if len(w) > 3]
+            for word in words:
+                result = pipedrive.search_deals(word)
+                if result.get("count", 0) > 0:
+                    return result
+            return pipedrive.get_all_deals()
+        elif pd_type == "contacts":
+            words = [w for w in question.split() if len(w) > 3]
+            for word in words:
+                result = pipedrive.search_contacts(word)
+                if result.get("count", 0) > 0:
+                    return result
+            return None
+        elif pd_type == "activities":
+            return pipedrive.get_upcoming_activities()
+        elif pd_type == "revenue":
+            return pipedrive.get_won_deals_summary()
+    except Exception as e:
+        logger.error("Pipedrive fetch error: " + str(e))
+        return {"error": str(e)}
+    return None
+
 def detect_netsuite_type(question):
     q = question.lower()
     balance_keywords = ["balance", "owe", "owes", "owed", "invoice", "invoices", "outstanding", "ar ", "accounts receivable", "how much", "payment due", "overdue", "aged", "past due"]
@@ -212,11 +259,79 @@ def fetch_all_projects():
         return _projects_cache  # Return stale cache if available
 
 
+
+# -------------------------------------------------------------------------
+# Lark Wiki
+# -------------------------------------------------------------------------
+_wiki_cache = []
+_wiki_cache_time = 0
+WIKI_CACHE_TTL = 300  # 5 minutes
+
+def fetch_lark_wiki():
+    """Fetch all Lark Wiki pages and return their text content."""
+    global _wiki_cache, _wiki_cache_time
+    now = time.time()
+    if _wiki_cache and (now - _wiki_cache_time) < WIKI_CACHE_TTL:
+        return _wiki_cache
+    try:
+        headers = lark._headers()
+        base_url = lark.base_url
+        # Get all wiki spaces
+        spaces_resp = requests.get(
+            f"{base_url}/open-apis/wiki/v2/spaces",
+            headers=headers, params={"page_size": 50}, timeout=20
+        )
+        spaces_data = spaces_resp.json()
+        if spaces_data.get("code") != 0:
+            logger.warning("Wiki spaces fetch failed: " + str(spaces_data))
+            return []
+        spaces = spaces_data.get("data", {}).get("items", [])
+        all_pages = []
+        for space in spaces:
+            space_id = space.get("space_id", "")
+            space_name = space.get("name", "")
+            try:
+                nodes_resp = requests.get(
+                    f"{base_url}/open-apis/wiki/v2/spaces/{space_id}/nodes",
+                    headers=headers, params={"page_size": 50}, timeout=20
+                )
+                nodes_data = nodes_resp.json()
+                if nodes_data.get("code") != 0:
+                    continue
+                nodes = nodes_data.get("data", {}).get("items", [])
+                for node in nodes:
+                    node_token = node.get("node_token", "")
+                    node_title = node.get("title", "")
+                    try:
+                        doc_resp = requests.get(
+                            f"{base_url}/open-apis/docx/v1/documents/{node_token}/raw_content",
+                            headers=headers, timeout=20
+                        )
+                        doc_data = doc_resp.json()
+                        if doc_data.get("code") == 0:
+                            raw_content = doc_data.get("data", {}).get("content", "")
+                            all_pages.append({
+                                "space": space_name,
+                                "title": node_title,
+                                "content": raw_content[:3000]  # cap per page
+                            })
+                    except Exception as e:
+                        logger.warning(f"Wiki page fetch error ({node_title}): {e}")
+            except Exception as e:
+                logger.warning(f"Wiki space fetch error ({space_name}): {e}")
+        _wiki_cache = all_pages
+        _wiki_cache_time = now
+        logger.info(f"Wiki: fetched {len(all_pages)} pages")
+        return all_pages
+    except Exception as e:
+        logger.error("Wiki fetch error: " + str(e))
+        return _wiki_cache
+
 # -------------------------------------------------------------------------
 # Gemini AI
 # -------------------------------------------------------------------------
 
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan"):
+def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None):
     if not GEMINI_API_KEY:
         return "AI not available. Check GEMINI_API_KEY."
 
@@ -229,6 +344,19 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan"):
             netsuite_section = "\n--- NETSUITE DATA ---\nError: " + netsuite_data["error"] + "\n--- END NETSUITE ---\n"
         else:
             netsuite_section = "\n--- NETSUITE DATA ---\n" + json.dumps(netsuite_data, indent=2)[:4000] + "\n--- END NETSUITE ---\n"
+    pipedrive_section = ""
+    if pipedrive_data:
+        if "error" in pipedrive_data:
+            pipedrive_section = "\n--- PIPEDRIVE CRM DATA ---\nError: " + pipedrive_data["error"] + "\n--- END PIPEDRIVE ---\n"
+        else:
+            pipedrive_section = "\n--- PIPEDRIVE CRM DATA ---\n" + json.dumps(pipedrive_data, indent=2)[:4000] + "\n--- END PIPEDRIVE ---\n"
+    wiki_section = ""
+    if wiki_pages:
+        wiki_lines = ["\n--- LARK WIKI KNOWLEDGE BASE ---"]
+        for page in wiki_pages[:10]:  # cap at 10 pages per query
+            wiki_lines.append(f"[{page['space']} / {page['title']}]\n{page['content'][:800]}")
+        wiki_lines.append("--- END WIKI ---\n")
+        wiki_section = "\n".join(wiki_lines)
 
     if scope == "hannah":
         scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
@@ -362,26 +490,38 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
         return
     netsuite_result = {}
     projects_result = {}
+    pipedrive_result = {}
+    wiki_result = {}
     def get_lark():
         projects_result["data"] = fetch_all_projects()
     def get_netsuite():
         data = fetch_netsuite_data(user_text)
         if data:
             netsuite_result["data"] = data
+    def get_pipedrive():
+        data = fetch_pipedrive_data(user_text)
+        if data:
+            pipedrive_result["data"] = data
+    def get_wiki():
+        pages = fetch_lark_wiki()
+        if pages:
+            wiki_result["data"] = pages
     t1 = threading.Thread(target=get_lark)
     t2 = threading.Thread(target=get_netsuite)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    t3 = threading.Thread(target=get_pipedrive)
+    t4 = threading.Thread(target=get_wiki)
+    t1.start(); t2.start(); t3.start(); t4.start()
+    t1.join(); t2.join(); t3.join(); t4.join()
     projects = projects_result.get("data", [])
     netsuite_data = netsuite_result.get("data")
+    pipedrive_data = pipedrive_result.get("data")
+    wiki_pages = wiki_result.get("data", [])
     # Apply user scope filter BEFORE passing to Claude
     scoped_projects = filter_projects_by_scope(projects, scope)
     if not scoped_projects and not netsuite_data:
         answer = "Could not load project data. Check bot access to Lark Base."
     else:
-        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope)
+        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages)
     try:
         lark.send_response(answer, chat_id=chat_id)
     except Exception as e:
