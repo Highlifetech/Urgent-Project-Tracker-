@@ -404,7 +404,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     )
     try:
         response = anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}]
@@ -643,7 +643,7 @@ def last_webhook():
 def debug():
     return jsonify({
         "claude_ready": bool(ANTHROPIC_API_KEY),
-        "claude_model": "claude-3-5-sonnet-20241022",
+        "claude_model": "claude-sonnet-4-6",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
@@ -662,7 +662,7 @@ def debug():
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
-    return jsonify({"model": "claude-3-5-sonnet-20241022", "provider": "Google"})
+    return jsonify({"model": "claude-sonnet-4-6", "provider": "Google"})
 
 
 @app.route("/list-chats", methods=["GET"])
@@ -708,7 +708,7 @@ def test_netsuite():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "claude-3-5-sonnet-20241022"})
+    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "claude-sonnet-4-6"})
 
 
 @app.route("/sample-data", methods=["GET"])
@@ -809,7 +809,7 @@ def build_morning_digest(projects):
 
     try:
         response = anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             system=system_prompt,
             messages=[{"role": "user", "content": f"Write the morning briefing from this data:\n\n{data_summary}"}]
