@@ -607,11 +607,6 @@ def webhook():
     scope = get_user_scope(sender_open_id)
     logger.info("Question: " + repr(user_text) + " chat=" + chat_id + " scope=" + scope + " sender=" + sender_open_id)
 
-    # Chat ID helper command
-    if "chat id" in user_text.lower() or "chatid" in user_text.lower():
-        lark.send_response(f"This chat ID is: `{chat_id}`", chat_id=chat_id)
-        return jsonify({"code": 0})
-
         artwork_order = detect_artwork_approval(user_text)
     threading.Thread(
         target=_process_message,
@@ -835,9 +830,9 @@ def morning_digest():
         if provided != digest_secret:
             return jsonify({"error": "Unauthorized"}), 401
 
-    chat_id = os.environ.get("LARK_CHAT_ID_DIGEST") or os.environ.get("LARK_CHAT_ID_MASTER", "")
+    chat_id = os.environ.get("LARK_CHAT_ID_DIGEST", "")
     if not chat_id:
-        return jsonify({"error": "LARK_CHAT_ID_DIGEST not set"}), 500
+        return jsonify({"error": "LARK_CHAT_ID_DIGEST not configured — morning digest can only post to the designated digest channel"}), 500
 
     try:
         projects = fetch_all_projects()
