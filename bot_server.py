@@ -601,7 +601,7 @@ def sample_data():
 # -------------------------------------------------------------------------
 # Startup
 # -------------------------------------------------------------------------
-_fetch_bot_open_id()
+threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
