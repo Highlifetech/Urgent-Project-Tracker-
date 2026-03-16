@@ -736,6 +736,119 @@ def sample_data():
 
 
 # -------------------------------------------------------------------------
+# Morning Digest
+# -------------------------------------------------------------------------
+def build_morning_digest(projects):
+    """Ask Claude to write a morning briefing from all project data."""
+    if not ANTHROPIC_API_KEY:
+        return "Morning digest unavailable: ANTHROPIC_API_KEY not set."
+    today = datetime.now(timezone.utc)
+    today_ms = today.timestamp() * 1000
+
+    # Separate projects by urgency
+    overdue = []
+    due_soon = []
+    in_production = []
+    awaiting_art = []
+
+    for p in projects:
+        status = str(p.get("Status", p.get("status", ""))).upper()
+        if status in ("SHIPPED", "RESOLVED/SHIPPED", "DONE"):
+            continue
+        due_raw = p.get("Due Date") or p.get("In-Hand Date") or p.get("In Hand Date")
+        due_ms = None
+        if isinstance(due_raw, (int, float)):
+            due_ms = float(due_raw)
+        days_until = None
+        if due_ms:
+            days_until = (due_ms - today_ms) / (1000 * 60 * 60 * 24)
+
+        if due_ms and days_until is not None and days_until < 0:
+            overdue.append({**p, "_days_overdue": abs(int(days_until))})
+        elif due_ms and days_until is not None and days_until <= 7:
+            due_soon.append({**p, "_days_until": int(days_until)})
+        elif "PLATING" in status or "POLISHING" in status or "PART CONFIRMED" in status:
+            in_production.append(p)
+        elif "WAITING ART" in status or "PAID/WAITING" in status:
+            awaiting_art.append(p)
+
+    def fmt(p):
+        name = (p.get("Order #") or p.get("__table_name__", "Unknown"))
+        client = p.get("Client") or p.get("__table_name__", "")
+        status = p.get("Status", "")
+        return f"- {name} | {client} | {status}"
+
+    sections = []
+    sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
+    sections.append(f"Total active projects: {len(projects)}")
+    if overdue:
+        sections.append(f"\nOVERDUE ({len(overdue)}):")
+        for p in sorted(overdue, key=lambda x: x.get('_days_overdue', 0), reverse=True)[:10]:
+            sections.append(fmt(p) + f" | {p['_days_overdue']} days overdue")
+    if due_soon:
+        sections.append(f"\nDUE WITHIN 7 DAYS ({len(due_soon)}):")
+        for p in sorted(due_soon, key=lambda x: x.get('_days_until', 99))[:10]:
+            sections.append(fmt(p) + f" | due in {p['_days_until']} days")
+    if in_production:
+        sections.append(f"\nIN PRODUCTION ({len(in_production)}):")
+        for p in in_production[:10]:
+            sections.append(fmt(p))
+    if awaiting_art:
+        sections.append(f"\nAWAITING ARTWORK ({len(awaiting_art)}):")
+        for p in awaiting_art[:10]:
+            sections.append(fmt(p))
+
+    data_summary = "\n".join(sections)
+
+    system_prompt = (
+        "You are IRON BOT — the HLT (Highlife Tech) internal assistant. "
+        "Write a morning briefing for the team. Be concise, direct, and actionable. "
+        "Use emojis sparingly for visual scanning (🔴 overdue, 🟡 due soon, 🔵 in production, ⚪ awaiting art). "
+        "Lead with the most urgent items. End with a one-line morale note if the day looks heavy."
+    )
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=800,
+            system=system_prompt,
+            messages=[{"role": "user", "content": f"Write the morning briefing from this data:\n\n{data_summary}"}]
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        logger.error(f"Morning digest Claude error: {e}")
+        return f"Morning digest error: {str(e)[:200]}"
+
+
+@app.route("/morning-digest", methods=["POST", "GET"])
+def morning_digest():
+    """Called by GitHub Actions every morning to post the daily briefing."""
+    # Auth check - require a secret token to prevent abuse
+    digest_secret = os.environ.get("DIGEST_SECRET", "")
+    if digest_secret:
+        provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+        if provided != digest_secret:
+            return jsonify({"error": "Unauthorized"}), 401
+
+    chat_id = os.environ.get("LARK_CHAT_ID_MASTER", "")
+    if not chat_id:
+        return jsonify({"error": "LARK_CHAT_ID_MASTER not set"}), 500
+
+    try:
+        projects = fetch_all_projects()
+        if not projects:
+            return jsonify({"error": "No project data available"}), 500
+
+        digest = build_morning_digest(projects)
+        lark.send_group_message(digest, chat_id=chat_id)
+        logger.info(f"Morning digest posted to {chat_id}")
+        return jsonify({"status": "ok", "length": len(digest), "chat_id": chat_id})
+    except Exception as e:
+        logger.error(f"Morning digest error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# -------------------------------------------------------------------------
 # Startup
 # -------------------------------------------------------------------------
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
