@@ -7,7 +7,7 @@ import threading
 import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+import anthropic
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 from pipedrive_client import PipedriveClient
@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LARK_APP_ID = os.environ.get("LARK_APP_ID", "")
 BOT_NAME = os.environ.get("BOT_NAME", "Iron Bot")  # Set to the bot's display name in Lark
 from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS
@@ -25,8 +25,8 @@ from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 
-genai.configure(api_key=GEMINI_API_KEY)
-logger.info("Gemini client ready")
+anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+logger.info("Claude client ready")
 
 # Deduplication: dict of {message_id: timestamp}
 processed_message_ids = {}
@@ -332,12 +332,10 @@ def fetch_lark_wiki():
 # -------------------------------------------------------------------------
 
 def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None):
-    if not GEMINI_API_KEY:
-        return "AI not available. Check GEMINI_API_KEY."
-
+    if not ANTHROPIC_API_KEY:
+        return "AI not available. Check ANTHROPIC_API_KEY."
     relevant = filter_relevant_projects(question, projects)
     context = build_context(relevant)
-
     netsuite_section = ""
     if netsuite_data:
         if "error" in netsuite_data:
@@ -353,22 +351,20 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     wiki_section = ""
     if wiki_pages:
         wiki_lines = ["\n--- LARK WIKI KNOWLEDGE BASE ---"]
-        for page in wiki_pages[:10]:  # cap at 10 pages per query
+        for page in wiki_pages[:10]:
             wiki_lines.append(f"[{page['space']} / {page['title']}]\n{page['content'][:800]}")
         wiki_lines.append("--- END WIKI ---\n")
         wiki_section = "\n".join(wiki_lines)
-
     if scope == "hannah":
         scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
     elif scope == "lucy":
         scope_instruction = "IMPORTANT: You are speaking with Lucy. Only discuss Lucy's projects and boards. Do not mention Hannah's or Brendan's projects.\n"
     else:
         scope_instruction = ""
-
     system_prompt = (
         scope_instruction +
         "You are IRON BOT — the HLT (Highlife Tech) company assistant. "
-        "You have access to live production, project, shipping, and client data.\n\n"
+        "You have access to live production, project, shipping, client, and CRM data.\n\n"
         "RESPONSE RULES (follow strictly):\n"
         "- Give ONLY the final answer. Never show your reasoning or thinking process.\n"
         "- Never say 'let me re-check' or 're-evaluate' or explain your logic.\n"
@@ -399,26 +395,27 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
         "- 'shipped/done' = SHIPPED or RESOLVED/SHIPPED\n"
         "- 'issues/problems' = NEEDS RESOLUTION\n"
     )
-
     user_message = (
-        "--- LARK PROJECT DATA ---\n" + context +
-        "\n--- END LARK DATA ---\n" +
+        "--- LARK PROJECT DATA ---\n" + context + "\n--- END LARK DATA ---\n" +
         netsuite_section +
+        pipedrive_section +
+        wiki_section +
         "\nQuestion: " + question
     )
-
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-pro",
-            system_instruction=system_prompt,
+        response = anthropic_client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}]
         )
-        response = model.generate_content(user_message)
-        answer = response.text.strip()
-        logger.info("Gemini replied: " + str(len(answer)) + " chars")
+        answer = response.content[0].text.strip()
+        logger.info("Claude replied: " + str(len(answer)) + " chars")
         return answer
     except Exception as e:
-        logger.error("Gemini error: " + str(e))
+        logger.error("Claude error: " + str(e))
         return "AI error: " + str(e)[:200]
+
 
 # -------------------------------------------------------------------------
 # Artwork Approval
@@ -645,8 +642,8 @@ def last_webhook():
 @app.route("/debug", methods=["GET"])
 def debug():
     return jsonify({
-        "gemini_ready": bool(GEMINI_API_KEY),
-        "gemini_model": "gemini-1.5-pro",
+        "claude_ready: bool(ANTHROPIC_API_KEY),
+        "claude_model": "claude-3-5-haiku-20241022",
         "lark_app_id_prefix": LARK_APP_ID[:10] + "..." if LARK_APP_ID else "NOT SET",
         "env_app_id": bool(os.environ.get("LARK_APP_ID")),
         "env_app_secret": bool(os.environ.get("LARK_APP_SECRET")),
@@ -665,7 +662,7 @@ def debug():
 
 @app.route("/list-models", methods=["GET"])
 def list_models():
-    return jsonify({"model": "gemini-1.5-pro", "provider": "Google"})
+    return jsonify({"model": "claude-3-5-haiku-20241022", "provider": "Google"})
 
 
 @app.route("/list-chats", methods=["GET"])
@@ -711,7 +708,7 @@ def test_netsuite():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "gemini-1.5-pro"})
+    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "model": "claude-3-5-haiku-20241022"})
 
 
 @app.route("/sample-data", methods=["GET"])
