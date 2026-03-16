@@ -2,39 +2,39 @@ name: Shipment Tracker
 
 on:
   schedule:
-      # 8:00 AM EST = 13:00 UTC
-          - cron: '0 13 * * *'
-              # 1:00 PM EST = 18:00 UTC
-                  - cron: '0 18 * * *'
-                      # 8:00 PM EST = 01:00 UTC (next day)
-                          - cron: '0 1 * * *'
-                            workflow_dispatch:
+    # 8:00 AM EST = 13:00 UTC
+    - cron: '0 13 * * *'
+    # 1:00 PM EST = 18:00 UTC
+    - cron: '0 18 * * *'
+    # 8:00 PM EST = 01:00 UTC (next day)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
 
-                            jobs:
-                              check-shipments:
-                                  runs-on: ubuntu-latest
+jobs:
+  check-shipments:
+    runs-on: ubuntu-latest
 
-                                      steps:
-                                            - name: Checkout code
-                                                    uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-                                                          - name: Set up Python
-                                                                  uses: actions/setup-python@v5
-                                                                          with:
-                                                                                    python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-                                                                                          - name: Install dependencies
-                                                                                                  run: pip install requests
+      - name: Install dependencies
+        run: pip install requests
 
-                                                                                                        - name: Run shipment tracker
-                                                                                                                env:
-                                                                                                                          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
-                                                                                                                                    LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
-                                                                                                                                              LARK_BASE_URL: ${{ secrets.LARK_BASE_URL }}
-                                                                                                                                                        LARK_BASE_APP_TOKEN: ${{ secrets.LARK_BASE_APP_TOKEN }}
-                                                                                                                                                                  LARK_CHAT_ID_HLT_INBOUND: ${{ secrets.LARK_CHAT_ID_HLT_INBOUND }}
-                                                                                                                                                                            LARK_CHAT_ID_HANNAH: ${{ secrets.LARK_CHAT_ID_HANNAH }}
-                                                                                                                                                                                      LARK_CHAT_ID_LUCY: ${{ secrets.LARK_CHAT_ID_LUCY }}
-                                                                                                                                                                                                LARK_CHAT_ID_CHEN: ${{ secrets.LARK_CHAT_ID_CHEN }}
-                                                                                                                                                                                                          LARK_CHAT_ID_MASTER: ${{ secrets.LARK_CHAT_ID_MASTER }}
-                                                                                                                                                                                                                  run: python shipment_tracker.py
+      - name: Run shipment tracker
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_BASE_URL: ${{ secrets.LARK_BASE_URL }}
+          LARK_BASE_APP_TOKEN: ${{ secrets.LARK_BASE_APP_TOKEN }}
+          LARK_CHAT_ID_HLT_INBOUND: ${{ secrets.LARK_CHAT_ID_HLT_INBOUND }}
+          LARK_CHAT_ID_HANNAH: ${{ secrets.LARK_CHAT_ID_HANNAH }}
+          LARK_CHAT_ID_LUCY: ${{ secrets.LARK_CHAT_ID_LUCY }}
+          LARK_CHAT_ID_CHEN: ${{ secrets.LARK_CHAT_ID_CHEN }}
+          LARK_CHAT_ID_MASTER: ${{ secrets.LARK_CHAT_ID_MASTER }}
+        run: python shipment_tracker.py
