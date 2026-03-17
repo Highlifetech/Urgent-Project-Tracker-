@@ -349,3 +349,62 @@ class LarkClient:
         status_field = field_name or "Status"
         return self.update_record_fields(table_id, record_id, {status_field: new_status}, app_token)
 
+    # -------------------------------------------------------------------------
+    # Record Comments
+    # -------------------------------------------------------------------------
+    def get_record_comments(self, table_id: str, record_id: str, app_token: str = None) -> list:
+        """Fetch all comments on a Lark Bitable record.
+
+        Uses:  GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}/comments
+        Returns a list of comment dicts, each with keys:
+            comment_id, user_name, user_open_id, content (plain text), create_time (ms)
+        """
+        token = app_token or LARK_BASE_APP_TOKEN
+        url = (
+            f"{self.base_url}/open-apis/bitable/v1/apps/"
+            f"{token}/tables/{table_id}/records/{record_id}/comments"
+        )
+        comments = []
+        page_token = None
+        while True:
+            params = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            resp = requests.get(url, headers=self._headers(), params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("code") != 0:
+                raise Exception(f"Failed to fetch comments: {data}")
+            items = data.get("data", {}).get("items", [])
+            for item in items:
+                body = item.get("body", {})
+                text_parts = []
+                for seg in body.get("content", []):
+                    for run in seg.get("runs", []):
+                        text_parts.append(run.get("text", ""))
+                plain_text = "".join(text_parts).strip()
+                user = item.get("user_info", {})
+                comments.append({
+                    "comment_id":   item.get("comment_id", ""),
+                    "user_name":    user.get("name", ""),
+                    "user_open_id": user.get("open_id", ""),
+                    "content":      plain_text,
+                    "create_time":  item.get("create_time", 0),
+                })
+            page_token = data.get("data", {}).get("page_token")
+            if not data.get("data", {}).get("has_more"):
+                break
+        logger.info(f"Fetched {len(comments)} comments for record {record_id}")
+        return comments
+
+    def get_comments_for_order(self, order_num: str, app_token: str = None) -> list:
+        """Find a record by order number and return its comments."""
+        record = self.find_record_by_order_num(order_num, app_token)
+        if not record:
+            raise Exception(f"Order {order_num} not found in any table")
+        return self.get_record_comments(
+            table_id=record["table_id"],
+            record_id=record["record_id"],
+            app_token=app_token,
+        )
+
