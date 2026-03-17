@@ -331,7 +331,7 @@ def fetch_lark_wiki():
 # Gemini AI
 # -------------------------------------------------------------------------
 
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None):
+def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None):
     if not ANTHROPIC_API_KEY:
         return "AI not available. Check ANTHROPIC_API_KEY."
     relevant = filter_relevant_projects(question, projects)
@@ -355,6 +355,18 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
             wiki_lines.append(f"[{page['space']} / {page['title']}]\n{page['content'][:800]}")
         wiki_lines.append("--- END WIKI ---\n")
         wiki_section = "\n".join(wiki_lines)
+    comments_section = ""
+    if comments_data:
+        order_num = comments_data.get("order_num", "")
+        clist = comments_data.get("comments", [])
+        lines = [f"\n--- COMMENTS FOR {order_num} ---"]
+        for c in clist:
+            from datetime import datetime
+            ts = c.get("create_time", 0)
+            dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M") if ts else "unknown"
+            lines.append(f"[{dt}] {c.get('user_name','?')}: {c.get('content','')}")
+        lines.append("--- END COMMENTS ---\n")
+        comments_section = "\n".join(lines)
     if scope == "hannah":
         scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
     elif scope == "lucy":
@@ -400,6 +412,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
         netsuite_section +
         pipedrive_section +
         wiki_section +
+        comments_section +
         "\nQuestion: " + question
     )
     try:
@@ -427,6 +440,19 @@ def detect_artwork_approval(text):
         if match:
             return "HLT" + match.group(1)
     return None
+
+
+def detect_comments_request(text):
+    """Return the order number if the user is asking about comments on a record, else None."""
+    t = text.lower()
+    comment_kw = ["comment", "comments", "note", "notes", "feedback", "remark", "remarks"]
+    if any(kw in t for kw in comment_kw):
+        match = re.search(r'hlt[s-]?(\d+)', text, re.IGNORECASE)
+        if match:
+            return "HLT" + match.group(1)
+    return None
+
+
 
 
 def handle_artwork_approval(order_num, user_text, chat_id):
@@ -489,6 +515,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     projects_result = {}
     pipedrive_result = {}
     wiki_result = {}
+    comments_result = {}
     def get_lark():
         projects_result["data"] = fetch_all_projects()
     def get_netsuite():
@@ -503,22 +530,33 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
         pages = fetch_lark_wiki()
         if pages:
             wiki_result["data"] = pages
+    def get_comments():
+        order_num = detect_comments_request(user_text)
+        if order_num:
+            try:
+                data = lark.get_comments_for_order(order_num)
+                if data:
+                    comments_result["data"] = {"order_num": order_num, "comments": data}
+            except Exception as e:
+                logger.error("Comments fetch error: " + str(e))
     t1 = threading.Thread(target=get_lark)
     t2 = threading.Thread(target=get_netsuite)
     t3 = threading.Thread(target=get_pipedrive)
     t4 = threading.Thread(target=get_wiki)
-    t1.start(); t2.start(); t3.start(); t4.start()
-    t1.join(); t2.join(); t3.join(); t4.join()
+    t5 = threading.Thread(target=get_comments)
+    t1.start(); t2.start(); t3.start(); t4.start(); t5.start()
+    t1.join(); t2.join(); t3.join(); t4.join(); t5.join()
     projects = projects_result.get("data", [])
     netsuite_data = netsuite_result.get("data")
     pipedrive_data = pipedrive_result.get("data")
     wiki_pages = wiki_result.get("data", [])
+    comments_data = comments_result.get("data")
     # Apply user scope filter BEFORE passing to Claude
     scoped_projects = filter_projects_by_scope(projects, scope)
     if not scoped_projects and not netsuite_data:
         answer = "Could not load project data. Check bot access to Lark Base."
     else:
-        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages)
+        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages, comments_data=comments_data)
     try:
         lark.send_response(answer, chat_id=chat_id)
     except Exception as e:
