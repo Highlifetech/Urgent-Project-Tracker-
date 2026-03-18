@@ -812,7 +812,7 @@ def build_morning_digest(projects):
         if isinstance(due_raw, (int, float)):
             due_ms = float(due_raw)
         days_until = None
-        if due_ms:
+        if due_ms is not None:
             days_until = (due_ms - today_ms) / (1000 * 60 * 60 * 24)
 
         if due_ms and days_until is not None and days_until < 0:
@@ -825,10 +825,10 @@ def build_morning_digest(projects):
             awaiting_art.append(p)
 
     def fmt(p):
-        name = (p.get("Order #") or p.get("__table_name__", "Unknown"))
+        order_num = p.get("Order #", "") or "No Order #"
         client = p.get("Client") or p.get("__table_name__", "")
         status = p.get("Status", "")
-        return f"- {name} | {client} | {status}"
+        return f"- {order_num} | {status}"
 
     sections = []
     sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
