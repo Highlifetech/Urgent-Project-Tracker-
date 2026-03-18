@@ -776,12 +776,26 @@ def sample_data():
 # -------------------------------------------------------------------------
 # Morning Digest
 # -------------------------------------------------------------------------
+DIGEST_EXCLUDED_BOARDS = ["quote", "partial ship", "part ship"]
+
+def _is_digest_excluded_board(table_name):
+    """Return True if this board should be excluded from the morning digest."""
+    tname = table_name.lower()
+    return any(excl in tname for excl in DIGEST_EXCLUDED_BOARDS)
+
+
 def build_morning_digest(projects):
     """Ask Claude to write a morning briefing from all project data."""
     if not ANTHROPIC_API_KEY:
         return "Morning digest unavailable: ANTHROPIC_API_KEY not set."
     today = datetime.now(timezone.utc)
     today_ms = today.timestamp() * 1000
+
+    # Filter out excluded boards (QUOTES, PART SHIPPED, etc.)
+    projects = [
+        p for p in projects
+        if not _is_digest_excluded_board(p.get("__table_name__", ""))
+    ]
 
     # Separate projects by urgency
     overdue = []
@@ -791,7 +805,7 @@ def build_morning_digest(projects):
 
     for p in projects:
         status = str(p.get("Status", p.get("status", ""))).upper()
-        if status in ("SHIPPED", "RESOLVED/SHIPPED", "DONE"):
+        if any(s in status for s in ("SHIPPED", "RESOLVED/SHIPPED", "DONE", "PART SHIPPED", "QUOTE NEEDED", "QUOTE ADDED")):
             continue
         due_raw = p.get("Due Date") or p.get("In-Hand Date") or p.get("In Hand Date")
         due_ms = None
@@ -818,7 +832,11 @@ def build_morning_digest(projects):
 
     sections = []
     sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
-    sections.append(f"Total active projects: {len(projects)}")
+    sections.append(f"Total active projects (excl. quotes & partial-shipped): {len(projects)}")
+        sections.append(f"NEEDS ARTWORK: {len(awaiting_art)} projects")
+        sections.append(f"OVERDUE: {len(overdue)} projects")
+        sections.append(f"DUE WITHIN 7 DAYS: {len(due_soon)} projects")
+        sections.append(f"IN PRODUCTION: {len(in_production)} projects")
     if overdue:
         sections.append(f"\nOVERDUE ({len(overdue)}):")
         for p in sorted(overdue, key=lambda x: x.get('_days_overdue', 0), reverse=True)[:10]:
@@ -842,13 +860,19 @@ def build_morning_digest(projects):
         "You are IRON BOT — the HLT (Highlife Tech) internal assistant. "
         "Write a morning briefing for the team. Be concise, direct, and actionable. "
         "Use emojis sparingly for visual scanning (🔴 overdue, 🟡 due soon, 🔵 in production, ⚪ awaiting art). "
-        "Lead with the most urgent items. End with a one-line morale note if the day looks heavy."
+        "Your digest MUST include these 4 sections in order: "
+        "## NEEDS ARTWORK — X projects | "
+        "## OVERDUE — X projects | "
+        "## DUE WITHIN 7 DAYS — X projects | "
+        "## TODAY'S PRIORITY LIST (numbered, most urgent first). "
+        "Use the exact counts from the data. Lead with overdue, then due-soon. "
+        "End with a one-line morale note if the day looks heavy."
     )
 
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=800,
+            max_tokens=1200,
             system=system_prompt,
             messages=[{"role": "user", "content": f"Write the morning briefing from this data:\n\n{data_summary}"}]
         )
