@@ -833,10 +833,10 @@ def build_morning_digest(projects):
     sections = []
     sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
     sections.append(f"Total active projects (excl. quotes & partial-shipped): {len(projects)}")
-        sections.append(f"NEEDS ARTWORK: {len(awaiting_art)} projects")
-        sections.append(f"OVERDUE: {len(overdue)} projects")
-        sections.append(f"DUE WITHIN 7 DAYS: {len(due_soon)} projects")
-        sections.append(f"IN PRODUCTION: {len(in_production)} projects")
+    sections.append(f"NEEDS ARTWORK: {len(awaiting_art)} projects")
+    sections.append(f"OVERDUE: {len(overdue)} projects")
+    sections.append(f"DUE WITHIN 7 DAYS: {len(due_soon)} projects")
+    sections.append(f"IN PRODUCTION: {len(in_production)} projects")
     if overdue:
         sections.append(f"\nOVERDUE ({len(overdue)}):")
         for p in sorted(overdue, key=lambda x: x.get('_days_overdue', 0), reverse=True)[:10]:
