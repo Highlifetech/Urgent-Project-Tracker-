@@ -776,7 +776,7 @@ def sample_data():
 # -------------------------------------------------------------------------
 # Morning Digest
 # -------------------------------------------------------------------------
-DIGEST_EXCLUDED_BOARDS = ["quote", "partial ship", "part ship"]
+DIGEST_EXCLUDED_BOARDS = ["quote", "partial ship", "part ship", "master"]
 
 def _is_digest_excluded_board(table_name):
     """Return True if this board should be excluded from the morning digest."""
@@ -825,10 +825,9 @@ def build_morning_digest(projects):
             awaiting_art.append(p)
 
     def fmt(p):
-        order_num = p.get("Order #", "") or "No Order #"
-        client = p.get("Client") or p.get("__table_name__", "")
+        order_num = p.get("Order #", "") or p.get("Sales Order", "") or p.get("SO#", "") or "No SO#"
         status = p.get("Status", "")
-        return f"- {order_num} | {status}"
+        return f"- SO#{order_num} | {status}"
 
     sections = []
     sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
@@ -865,6 +864,12 @@ def build_morning_digest(projects):
         "## OVERDUE — X projects | "
         "## DUE WITHIN 7 DAYS — X projects | "
         "## TODAY'S PRIORITY LIST (numbered, most urgent first). "
+        "IMPORTANT RULES:\n"
+        "- DO NOT include any master tables or quotes boards in the digest.\n"
+        "- For OVERDUE, only include projects whose In Hand Date is strictly before today.\n"
+        "- For each status section (NEEDS ARTWORK, OVERDUE, DUE WITHIN 7 DAYS, IN PRODUCTION), "
+        "list the actual sales order numbers (SO#) for every project in that group, not just counts.\n"
+        "- Do NOT show raw data tables or quotes board data anywhere in the digest.\n"
         "Use the exact counts from the data. Lead with overdue, then due-soon. "
         "End with a one-line morale note if the day looks heavy."
     )
