@@ -776,12 +776,26 @@ def sample_data():
 # -------------------------------------------------------------------------
 # Morning Digest
 # -------------------------------------------------------------------------
-DIGEST_EXCLUDED_BOARDS = ["quote", "partial ship", "part ship", "master"]
+# Exact board names (case-insensitive) to exclude from the morning digest
+DIGEST_EXCLUDED_BOARDS = {
+    "hannah quotes",
+    "lucy quotes",
+    "brendan quotes",
+    "master production tab",
+}
 
 def _is_digest_excluded_board(table_name):
-    """Return True if this board should be excluded from the morning digest."""
-    tname = table_name.lower()
-    return any(excl in tname for excl in DIGEST_EXCLUDED_BOARDS)
+    """Return True if this board should be excluded from the morning digest.
+    Matches on exact board name (case-insensitive) only."""
+    tname = table_name.strip().lower()
+    # Exact match first
+    if tname in DIGEST_EXCLUDED_BOARDS:
+        return True
+    # Also catch truncated names like "master production tab..." stored with ellipsis
+    for excl in DIGEST_EXCLUDED_BOARDS:
+        if tname.startswith(excl):
+            return True
+    return False
 
 
 def build_morning_digest(projects):
@@ -807,7 +821,8 @@ def build_morning_digest(projects):
         status = str(p.get("Status", p.get("status", ""))).upper()
         if any(s in status for s in ("SHIPPED", "RESOLVED/SHIPPED", "DONE", "PART SHIPPED", "QUOTE NEEDED", "QUOTE ADDED")):
             continue
-        due_raw = p.get("Due Date") or p.get("In-Hand Date") or p.get("In Hand Date")
+        # "In-Hand Date" is the canonical field name on cards
+        due_raw = p.get("In-Hand Date") or p.get("In Hand Date") or p.get("Due Date")
         due_ms = None
         if isinstance(due_raw, (int, float)):
             due_ms = float(due_raw)
@@ -815,7 +830,8 @@ def build_morning_digest(projects):
         if due_ms is not None:
             days_until = (due_ms - today_ms) / (1000 * 60 * 60 * 24)
 
-        if due_ms and days_until is not None and days_until < 0:
+        # Only overdue if it HAS an In-Hand Date AND that date is before today
+        if due_ms is not None and days_until is not None and days_until < 0:
             overdue.append({**p, "_days_overdue": abs(int(days_until))})
         elif due_ms and days_until is not None and days_until <= 7:
             due_soon.append({**p, "_days_until": int(days_until)})
