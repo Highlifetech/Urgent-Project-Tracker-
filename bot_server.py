@@ -331,7 +331,7 @@ def fetch_lark_wiki():
 # Gemini AI
 # -------------------------------------------------------------------------
 
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None):
+def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None, calendar_data=None, tasks_data=None, doc_data=None, contact_data=None, approval_data=None, chat_data=None):
     if not ANTHROPIC_API_KEY:
         return "AI not available. Check ANTHROPIC_API_KEY."
     relevant = filter_relevant_projects(question, projects)
@@ -367,6 +367,44 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
             lines.append(f"[{dt}] {c.get('user_name','?')}: {c.get('content','')}")
         lines.append("--- END COMMENTS ---\n")
         comments_section = "\n".join(lines)
+    calendar_section = ""
+    if calendar_data:
+        events = calendar_data.get("events", [])
+        if events:
+            cal_lines = ["\n--- CALENDAR EVENTS ---"]
+            for ev in events[:20]:
+                summary = ev.get("summary", "No title")
+                start = ev.get("start_time", {})
+                end = ev.get("end_time", {})
+                start_str = start.get("date", "") or start.get("timestamp", "")
+                end_str = end.get("date", "") or end.get("timestamp", "")
+                cal_lines.append(f"- {summary} | Start: {start_str} | End: {end_str}")
+            cal_lines.append("--- END CALENDAR ---\n")
+            calendar_section = "\n".join(cal_lines)
+    tasks_section = ""
+    if tasks_data:
+        task_list = tasks_data.get("tasks", [])
+        if task_list:
+            task_lines = ["\n--- TASKS ---"]
+            for tk in task_list[:20]:
+                title = tk.get("summary", "No title")
+                due = tk.get("due", {}).get("timestamp", "no due date")
+                status = "completed" if tk.get("completed_at") else "open"
+                task_lines.append(f"- [{status}] {title} | Due: {due}")
+            task_lines.append("--- END TASKS ---\n")
+            tasks_section = "\n".join(task_lines)
+    doc_section = ""
+    if doc_data:
+        doc_section = "\n--- DOCUMENT DATA ---\n" + json.dumps(doc_data, indent=2)[:4000] + "\n--- END DOCUMENT ---\n"
+    contact_section = ""
+    if contact_data:
+        contact_section = "\n--- CONTACT DATA ---\n" + json.dumps(contact_data, indent=2)[:4000] + "\n--- END CONTACT ---\n"
+    approval_section = ""
+    if approval_data:
+        approval_section = "\n--- APPROVAL DATA ---\n" + json.dumps(approval_data, indent=2)[:4000] + "\n--- END APPROVAL ---\n"
+    chat_section = ""
+    if chat_data:
+        chat_section = "\n--- CHAT DATA ---\n" + json.dumps(chat_data, indent=2)[:4000] + "\n--- END CHAT ---\n"
     if scope == "hannah":
         scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
     elif scope == "lucy":
@@ -376,7 +414,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     system_prompt = (
         scope_instruction +
         "You are IRON BOT — the HLT (Highlife Tech) company assistant. "
-        "You have access to live production, project, shipping, client, and CRM data.\n\n"
+        "You have access to live production, project, shipping, client, CRM, calendar, tasks, documents, contacts, approvals, and chat data.\n\n"
         "RESPONSE RULES (follow strictly):\n"
         "- Give ONLY the final answer. Never show your reasoning or thinking process.\n"
         "- Never say 'let me re-check' or 're-evaluate' or explain your logic.\n"
@@ -413,6 +451,12 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
         pipedrive_section +
         wiki_section +
         comments_section +
+        calendar_section +
+        tasks_section +
+        doc_section +
+        contact_section +
+        approval_section +
+        chat_section +
         "\nQuestion: " + question
     )
     try:
@@ -511,6 +555,28 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
         except Exception as e:
             logger.error("Send failed: " + str(e))
         return
+    # --- Command routing: detect specialized commands and route to handlers ---
+    cmd_type = detect_command_type(user_text)
+    if cmd_type == "calendar":
+        handle_calendar_query(user_text, chat_id, scope)
+        return
+    elif cmd_type == "task":
+        handle_task_command(user_text, chat_id, scope)
+        return
+    elif cmd_type == "approval":
+        handle_approval_query(user_text, chat_id, scope)
+        return
+    elif cmd_type == "doc":
+        handle_doc_query(user_text, chat_id, scope)
+        return
+    elif cmd_type == "contact":
+        handle_contact_lookup(user_text, chat_id, scope)
+        return
+    elif cmd_type == "chat":
+        handle_chat_management(user_text, chat_id, scope)
+        return
+    # --- End command routing (falls through to general handler for "general" and "sheet" types) ---
+
     netsuite_result = {}
     projects_result = {}
     pipedrive_result = {}
