@@ -116,3 +116,26 @@ NOTIFICATION_CHATS = [
         LARK_CHAT_ID_CHEN,
         LARK_CHAT_ID_MASTER,
 ]
+
+# =============================================================================
+# LARK WEBHOOK VERIFICATION
+# =============================================================================
+LARK_VERIFICATION_TOKEN = os.environ.get("LARK_VERIFICATION_TOKEN", "")
+LARK_ENCRYPT_KEY = os.environ.get("LARK_ENCRYPT_KEY", "")
+
+# =============================================================================
+# CARD CALLBACK VERIFICATION (for interactive message card action buttons)
+# Set this in Lark Developer Console -> Features -> Bot -> Card callback URL
+# =============================================================================
+CARD_CALLBACK_VERIFICATION_TOKEN = os.environ.get("CARD_CALLBACK_VERIFICATION_TOKEN", "")
+
+# =============================================================================
+# CALENDAR (for morning digest / scheduling features)
+# =============================================================================
+LARK_PRIMARY_CALENDAR_ID = os.environ.get("LARK_PRIMARY_CALENDAR_ID", "")
+
+# =============================================================================
+# DIGEST CHANNEL
+# =============================================================================
+LARK_CHAT_ID_DIGEST = os.environ.get("LARK_CHAT_ID_DIGEST", "")
+DIGEST_SECRET = os.environ.get("DIGEST_SECRET", "")
