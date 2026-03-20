@@ -932,6 +932,340 @@ def morning_digest():
 
 
 # -------------------------------------------------------------------------
+# Interactive Card Action Callback (buttons in cards)
+# -------------------------------------------------------------------------
+@app.route("/card-callback", methods=["POST"])
+def card_callback():
+    """Handle interactive card button clicks from Lark."""
+    body = request.get_json(silent=True) or {}
+
+    # URL verification for card callback
+    if body.get("type") == "url_verification":
+        return jsonify({"challenge": body.get("challenge", "")})
+
+    # Extract action info
+    action = body.get("action", {})
+    action_value = action.get("value", {}).get("action", "")
+    operator = body.get("operator", {})
+    operator_id = operator.get("open_id", "")
+    open_message_id = body.get("open_message_id", "")
+    open_chat_id = body.get("open_chat_id", "")
+
+    logger.info(f"Card callback: action={action_value} operator={operator_id}")
+
+    if not action_value:
+        return jsonify({"code": 0})
+
+    # Route card actions
+    try:
+        if action_value.startswith("approve_artwork_"):
+            order_num = action_value.replace("approve_artwork_", "")
+            result = handle_artwork_approval(order_num, f"Artwork approved for {order_num}", open_chat_id)
+            lark.reply_text(open_message_id, result)
+
+        elif action_value.startswith("complete_task_"):
+            task_id = action_value.replace("complete_task_", "")
+            lark.complete_task(task_id)
+            lark.reply_text(open_message_id, f"Task {task_id} marked as complete.")
+
+        elif action_value.startswith("approve_"):
+            instance_id = action_value.replace("approve_", "")
+            lark.reply_text(open_message_id, f"Approval {instance_id} approved.")
+
+        elif action_value.startswith("reject_"):
+            instance_id = action_value.replace("reject_", "")
+            lark.reply_text(open_message_id, f"Approval {instance_id} rejected.")
+
+        elif action_value == "refresh_digest":
+            threading.Thread(target=_send_refreshed_digest, args=(open_chat_id,), daemon=True).start()
+
+        elif action_value.startswith("pin_"):
+            msg_id = action_value.replace("pin_", "")
+            lark.pin_message(msg_id)
+            lark.reply_text(open_message_id, "Message pinned.")
+
+        else:
+            logger.info(f"Unknown card action: {action_value}")
+
+    except Exception as e:
+        logger.error(f"Card callback error: {e}")
+
+    return jsonify({"code": 0})
+
+
+def _send_refreshed_digest(chat_id):
+    try:
+        projects = fetch_all_projects()
+        if projects:
+            digest = build_morning_digest(projects)
+            lark.send_group_message(digest, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Refresh digest error: {e}")
+
+
+# -------------------------------------------------------------------------
+# New Command Processors (detected by Claude in ask_gemini)
+# -------------------------------------------------------------------------
+
+def handle_create_record(question, chat_id, scope):
+    """Handle requests to create new records in Lark Base."""
+    try:
+        answer = ask_gemini(
+            question, fetch_all_projects(),
+            scope=scope,
+            wiki_pages=fetch_lark_wiki()
+        )
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Create record error: {e}")
+        lark.send_response(f"Error creating record: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_calendar_query(question, chat_id, scope):
+    """Handle calendar-related questions."""
+    try:
+        calendar_data = None
+        calendar_id = os.environ.get("LARK_PRIMARY_CALENDAR_ID", "")
+        if calendar_id:
+            events = lark.list_events(calendar_id)
+            calendar_data = {"events": events[:20]}
+
+        projects = fetch_all_projects()
+        answer = ask_gemini(question, projects, scope=scope,
+                           wiki_pages=fetch_lark_wiki(),
+                           calendar_data=calendar_data)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Calendar query error: {e}")
+        lark.send_response(f"Calendar error: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_task_command(question, chat_id, scope):
+    """Handle task creation and management via the bot."""
+    try:
+        projects = fetch_all_projects()
+        tasks_data = None
+        try:
+            tasks = lark.list_tasks(page_size=20)
+            tasks_data = {"tasks": tasks}
+        except Exception:
+            pass
+
+        answer = ask_gemini(question, projects, scope=scope,
+                           wiki_pages=fetch_lark_wiki(),
+                           tasks_data=tasks_data)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Task command error: {e}")
+        lark.send_response(f"Task error: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_doc_query(question, chat_id, scope):
+    """Handle document-related questions - search wiki and docs."""
+    try:
+        wiki_pages = fetch_lark_wiki()
+        doc_results = None
+        try:
+            words = [w for w in question.split() if len(w) > 3]
+            if words:
+                doc_results = lark.search_docs(" ".join(words[:3]))
+        except Exception:
+            pass
+
+        projects = fetch_all_projects()
+        answer = ask_gemini(question, projects, scope=scope,
+                           wiki_pages=wiki_pages,
+                           doc_data=doc_results)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Doc query error: {e}")
+        lark.send_response(f"Doc error: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_contact_lookup(question, chat_id, scope):
+    """Handle contact/people lookup questions."""
+    try:
+        words = [w for w in question.split() if len(w) > 2]
+        contact_data = None
+        for word in words:
+            try:
+                results = lark.search_users(word)
+                if results:
+                    contact_data = {"users": results[:5]}
+                    break
+            except Exception:
+                continue
+
+        projects = fetch_all_projects()
+        answer = ask_gemini(question, projects, scope=scope,
+                           contact_data=contact_data)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Contact lookup error: {e}")
+        lark.send_response(f"Contact error: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_approval_query(question, chat_id, scope):
+    """Handle approval-related queries."""
+    try:
+        approval_data = None
+        try:
+            definitions = lark.list_approval_definitions()
+            approval_data = {"definitions": definitions[:10]}
+        except Exception:
+            pass
+
+        projects = fetch_all_projects()
+        answer = ask_gemini(question, projects, scope=scope,
+                           approval_data=approval_data)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Approval query error: {e}")
+        lark.send_response(f"Approval error: {str(e)[:200]}", chat_id=chat_id)
+
+
+def handle_chat_management(question, chat_id, scope):
+    """Handle group chat management requests."""
+    try:
+        chat_data = None
+        try:
+            chats = lark.list_chats(limit=50)
+            chat_data = {"chats": [{"chat_id": c.get("chat_id"), "name": c.get("name", "")} for c in chats]}
+        except Exception:
+            pass
+
+        projects = fetch_all_projects()
+        answer = ask_gemini(question, projects, scope=scope,
+                           chat_data=chat_data)
+        lark.send_response(answer, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Chat management error: {e}")
+        lark.send_response(f"Chat error: {str(e)[:200]}", chat_id=chat_id)
+
+
+# -------------------------------------------------------------------------
+# Enhanced command detection for routing to new handlers
+# -------------------------------------------------------------------------
+CALENDAR_KEYWORDS = ["calendar", "event", "meeting", "schedule", "appointment", "time off", "who is out", "busy"]
+TASK_KEYWORDS = ["task", "todo", "to-do", "assign", "reminder", "follow up", "follow-up", "action item"]
+DOC_KEYWORDS = ["document", "wiki", "doc ", "docs", "sop", "procedure", "manual", "knowledge base", "write a doc"]
+CONTACT_KEYWORDS = ["who is", "contact", "email for", "phone for", "department", "team member", "org chart"]
+APPROVAL_KEYWORDS = ["approval", "approve", "reject", "pending approval", "sign off"]
+CHAT_KEYWORDS = ["create chat", "create group", "add to chat", "remove from chat", "chat members"]
+SHEET_KEYWORDS = ["spreadsheet", "sheet", "excel", "csv", "export data"]
+
+def detect_command_type(text):
+    """Detect which handler should process this message."""
+    t = text.lower()
+    for kw in CHAT_KEYWORDS:
+        if kw in t:
+            return "chat"
+    for kw in CALENDAR_KEYWORDS:
+        if kw in t:
+            return "calendar"
+    for kw in TASK_KEYWORDS:
+        if kw in t:
+            return "task"
+    for kw in APPROVAL_KEYWORDS:
+        if kw in t:
+            return "approval"
+    for kw in CONTACT_KEYWORDS:
+        if kw in t:
+            return "contact"
+    for kw in DOC_KEYWORDS:
+        if kw in t:
+            return "doc"
+    for kw in SHEET_KEYWORDS:
+        if kw in t:
+            return "sheet"
+    return "general"
+
+
+# -------------------------------------------------------------------------
+# Event Subscription Endpoint (for Lark real-time events)
+# -------------------------------------------------------------------------
+@app.route("/event", methods=["POST"])
+def event_subscription():
+    """Handle Lark event subscriptions (Base record changes, chat events, etc.)."""
+    body = request.get_json(silent=True) or {}
+
+    # URL verification
+    if body.get("type") == "url_verification":
+        return jsonify({"challenge": body.get("challenge", "")})
+
+    # Event processing
+    header = body.get("header", {})
+    event_type = header.get("event_type", "")
+    event = body.get("event", {})
+
+    logger.info(f"Event received: {event_type}")
+
+    try:
+        if event_type == "drive.file.bitable_record_changed_v1":
+            # Base record changed - could trigger notifications
+            logger.info(f"Bitable record changed: {event}")
+
+        elif event_type == "im.chat.member.bot.added_v1":
+            # Bot added to a new chat
+            chat_id = event.get("chat_id", "")
+            logger.info(f"Bot added to chat: {chat_id}")
+            if chat_id:
+                lark.send_text("Hello! I'm IRON BOT. @ mention me with any question about projects, orders, shipments, or anything else. Type 'help' for a list of commands.", chat_id=chat_id)
+
+        elif event_type == "im.chat.member.bot.deleted_v1":
+            chat_id = event.get("chat_id", "")
+            logger.info(f"Bot removed from chat: {chat_id}")
+
+        elif event_type == "approval.approval.updated_v4":
+            logger.info(f"Approval updated: {event}")
+
+        elif event_type == "calendar.calendar.event.changed_v4":
+            logger.info(f"Calendar event changed: {event}")
+
+    except Exception as e:
+        logger.error(f"Event processing error: {e}")
+
+    return jsonify({"code": 0})
+
+
+# -------------------------------------------------------------------------
+# Sheets Export Endpoint
+# -------------------------------------------------------------------------
+@app.route("/export-data", methods=["GET"])
+def export_data():
+    """Export project data as JSON (can be used to create sheets)."""
+    try:
+        projects = fetch_all_projects()
+        return jsonify({
+            "status": "ok",
+            "total_records": len(projects),
+            "records": projects[:500]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# -------------------------------------------------------------------------
+# Chat Management Endpoint
+# -------------------------------------------------------------------------
+@app.route("/create-project-chat", methods=["POST"])
+def create_project_chat():
+    """Create a new project-specific chat."""
+    body = request.get_json(silent=True) or {}
+    name = body.get("name", "")
+    user_ids = body.get("user_ids", [])
+
+    if not name:
+        return jsonify({"error": "Chat name required"}), 400
+
+    try:
+        result = lark.create_chat(name, user_ids=user_ids)
+        return jsonify({"status": "ok", "chat": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# -------------------------------------------------------------------------
 # Startup
 # -------------------------------------------------------------------------
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
