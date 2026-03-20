@@ -8,6 +8,8 @@ import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 import anthropic
+import psycopg2
+import psycopg2.extras
 from lark_client import LarkClient
 from netsuite_client import NetSuiteClient
 from pipedrive_client import PipedriveClient
@@ -19,6 +21,7 @@ app = Flask(__name__)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LARK_APP_ID = os.environ.get("LARK_APP_ID", "")
 BOT_NAME = os.environ.get("BOT_NAME", "Iron Bot")  # Set to the bot's display name in Lark
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 from config import LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK, FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS
 
 # Known user open_ids for scoping (set via env vars or defaults)
@@ -39,34 +42,127 @@ _last_webhooks = []
 BOT_OPEN_ID = None
 
 # -------------------------------------------------------------------------
-# Conversation History (per chat_id, keeps last N turns for context)
+# Persistent Conversation History (Postgres-backed)
 # -------------------------------------------------------------------------
-conversation_history = {}  # {chat_id: [{"role": "user"/"assistant", "content": "..."}]}
 CONVERSATION_MAX_TURNS = 10  # Keep last 10 exchanges per chat
-CONVERSATION_TTL = 3600  # Clear history after 1 hour of inactivity
-conversation_timestamps = {}  # {chat_id: last_activity_timestamp}
+CONVERSATION_TTL = 3600  # Expire messages older than 1 hour
+
+def _get_db_conn():
+    """Get a Postgres connection. Returns None if DATABASE_URL not set."""
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        return conn
+    except Exception as e:
+        logger.error("Postgres connection error: " + str(e))
+        return None
+
+def _init_db():
+    """Create conversation tables if they don't exist."""
+    conn = _get_db_conn()
+    if not conn:
+        logger.warning("DATABASE_URL not set — conversation memory will be in-memory only (non-persistent)")
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id SERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversations_chat_id
+                ON conversations (chat_id, created_at DESC)
+            """)
+            conn.commit()
+        logger.info("Postgres conversation table ready")
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("DB init error: " + str(e))
+        conn.close()
+        return False
+
+# In-memory fallback if Postgres is unavailable
+_memory_history = {}
+_memory_timestamps = {}
 
 def _get_conversation(chat_id):
-    """Get conversation history for a chat, clearing stale ones."""
+    """Get conversation history for a chat from Postgres (or in-memory fallback)."""
+    conn = _get_db_conn()
+    if conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                # Clean up stale messages first
+                cur.execute(
+                    "DELETE FROM conversations WHERE created_at < NOW() - INTERVAL '%s seconds'",
+                    (CONVERSATION_TTL,)
+                )
+                # Fetch recent messages for this chat
+                max_messages = CONVERSATION_MAX_TURNS * 2
+                cur.execute(
+                    "SELECT role, content FROM conversations WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s",
+                    (chat_id, max_messages)
+                )
+                rows = cur.fetchall()
+                conn.commit()
+            conn.close()
+            # Reverse so oldest first (chronological order)
+            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        except Exception as e:
+            logger.error("DB read error: " + str(e))
+            try:
+                conn.close()
+            except Exception:
+                pass
+    # Fallback to in-memory
     now = time.time()
-    # Clear stale conversations
-    stale = [cid for cid, ts in conversation_timestamps.items() if now - ts > CONVERSATION_TTL]
+    stale = [cid for cid, ts in _memory_timestamps.items() if now - ts > CONVERSATION_TTL]
     for cid in stale:
-        conversation_history.pop(cid, None)
-        conversation_timestamps.pop(cid, None)
-    return conversation_history.get(chat_id, [])
+        _memory_history.pop(cid, None)
+        _memory_timestamps.pop(cid, None)
+    return _memory_history.get(chat_id, [])
 
 def _add_to_conversation(chat_id, role, content):
-    """Add a message to conversation history."""
-    if chat_id not in conversation_history:
-        conversation_history[chat_id] = []
-    conversation_history[chat_id].append({"role": role, "content": content})
-    # Trim to max turns (each turn = user + assistant = 2 messages)
+    """Add a message to conversation history in Postgres (or in-memory fallback)."""
+    conn = _get_db_conn()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO conversations (chat_id, role, content) VALUES (%s, %s, %s)",
+                    (chat_id, role, content[:8000])
+                )
+                # Trim to keep only the last N messages per chat
+                max_messages = CONVERSATION_MAX_TURNS * 2
+                cur.execute("""
+                    DELETE FROM conversations WHERE id IN (
+                        SELECT id FROM conversations WHERE chat_id = %s
+                        ORDER BY created_at DESC OFFSET %s
+                    )
+                """, (chat_id, max_messages))
+                conn.commit()
+            conn.close()
+            return
+        except Exception as e:
+            logger.error("DB write error: " + str(e))
+            try:
+                conn.close()
+            except Exception:
+                pass
+    # Fallback to in-memory
+    if chat_id not in _memory_history:
+        _memory_history[chat_id] = []
+    _memory_history[chat_id].append({"role": role, "content": content})
     max_messages = CONVERSATION_MAX_TURNS * 2
-    if len(conversation_history[chat_id]) > max_messages:
-        conversation_history[chat_id] = conversation_history[chat_id][-max_messages:]
-    conversation_timestamps[chat_id] = time.time()
-
+    if len(_memory_history[chat_id]) > max_messages:
+        _memory_history[chat_id] = _memory_history[chat_id][-max_messages:]
+    _memory_timestamps[chat_id] = time.time()
 
 lark = LarkClient()
 netsuite = NetSuiteClient()
@@ -1383,6 +1479,7 @@ def create_project_chat():
 # -------------------------------------------------------------------------
 # Startup
 # -------------------------------------------------------------------------
+_init_db()  # Initialize Postgres conversation tables
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 
 if __name__ == "__main__":
