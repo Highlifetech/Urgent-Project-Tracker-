@@ -38,6 +38,36 @@ _last_webhooks = []
 # Bot's own open_id - fetched at startup
 BOT_OPEN_ID = None
 
+# -------------------------------------------------------------------------
+# Conversation History (per chat_id, keeps last N turns for context)
+# -------------------------------------------------------------------------
+conversation_history = {}  # {chat_id: [{"role": "user"/"assistant", "content": "..."}]}
+CONVERSATION_MAX_TURNS = 10  # Keep last 10 exchanges per chat
+CONVERSATION_TTL = 3600  # Clear history after 1 hour of inactivity
+conversation_timestamps = {}  # {chat_id: last_activity_timestamp}
+
+def _get_conversation(chat_id):
+    """Get conversation history for a chat, clearing stale ones."""
+    now = time.time()
+    # Clear stale conversations
+    stale = [cid for cid, ts in conversation_timestamps.items() if now - ts > CONVERSATION_TTL]
+    for cid in stale:
+        conversation_history.pop(cid, None)
+        conversation_timestamps.pop(cid, None)
+    return conversation_history.get(chat_id, [])
+
+def _add_to_conversation(chat_id, role, content):
+    """Add a message to conversation history."""
+    if chat_id not in conversation_history:
+        conversation_history[chat_id] = []
+    conversation_history[chat_id].append({"role": role, "content": content})
+    # Trim to max turns (each turn = user + assistant = 2 messages)
+    max_messages = CONVERSATION_MAX_TURNS * 2
+    if len(conversation_history[chat_id]) > max_messages:
+        conversation_history[chat_id] = conversation_history[chat_id][-max_messages:]
+    conversation_timestamps[chat_id] = time.time()
+
+
 lark = LarkClient()
 netsuite = NetSuiteClient()
 pipedrive = PipedriveClient()
@@ -331,7 +361,7 @@ def fetch_lark_wiki():
 # Gemini AI
 # -------------------------------------------------------------------------
 
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None, calendar_data=None, tasks_data=None, doc_data=None, contact_data=None, approval_data=None, chat_data=None):
+def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None, calendar_data=None, tasks_data=None, doc_data=None, contact_data=None, approval_data=None, chat_data=None, chat_history=None):
     if not ANTHROPIC_API_KEY:
         return "AI not available. Check ANTHROPIC_API_KEY."
     relevant = filter_relevant_projects(question, projects)
@@ -413,34 +443,49 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
         scope_instruction = ""
     system_prompt = (
         scope_instruction +
-        "You are IRON BOT — the HLT (Highlife Tech) company assistant. "
-        "You have access to live production, project, shipping, client, CRM, calendar, tasks, documents, contacts, approvals, and chat data.\n\n"
-        "RESPONSE RULES (follow strictly):\n"
-        "- Give ONLY the final answer. Never show your reasoning or thinking process.\n"
-        "- Never say 'let me re-check' or 're-evaluate' or explain your logic.\n"
-        "- Be concise and direct. Use bullet points for lists.\n"
-        "- Highlight urgent or overdue items clearly.\n"
-        "- If nothing matches, say so in one sentence.\n\n"
-        "FIELD NOTES:\n"
-        "- 'Due Date' in data = 'In Hand Date' (date client needs delivery). Always call it 'In Hand Date'.\n"
-        "- Timestamps are Unix milliseconds — convert to readable dates in all answers.\n"
-        "- Board ownership: tables with 'Lucy' = Lucy's, 'Hannah' = Hannah's, else Brendan's.\n\n"
-        "STATUS VALUES:\n"
+        "You are IRON BOT, the intelligent assistant for HLT (High Life Tech / Highlife Tech). "
+        "You are powered by Claude and should respond the way Claude would — thoughtful, helpful, "
+        "conversational, and thorough. You have access to live company data including projects, "
+        "production status, shipping, clients, CRM (Pipedrive), financials (NetSuite), calendar, "
+        "tasks, documents, wiki, contacts, approvals, email, and chat management.\n\n"
+
+        "HOW TO RESPOND:\n"
+        "- Be natural and conversational. Talk like a knowledgeable team member, not a database.\n"
+        "- Give complete, thoughtful answers. If someone asks about a project, provide context — "
+        "what stage it's at, what's coming next, any concerns or deadlines approaching.\n"
+        "- Be proactive: if you notice something relevant (like an overdue item, an upcoming deadline, "
+        "or a potential issue), mention it even if they didn't ask.\n"
+        "- When listing items, organize them clearly but don't just dump raw data — summarize and "
+        "highlight what matters.\n"
+        "- If you're unsure about something or the data is incomplete, say so honestly and suggest "
+        "what they could do to find out.\n"
+        "- Use a warm, professional tone. You're part of the team.\n"
+        "- You can handle follow-up questions — conversation history is provided when available.\n"
+        "- For general knowledge questions (not about company data), answer them like Claude would — "
+        "you're not limited to just company data queries.\n\n"
+
+        "COMPANY DATA KNOWLEDGE:\n"
+        "- 'Due Date' in the data = 'In Hand Date' (the date the client needs delivery). "
+        "Always refer to it as 'In Hand Date' when talking to the team.\n"
+        "- Timestamps in the data are Unix milliseconds — always convert them to readable dates.\n"
+        "- Board ownership: tables with 'Lucy' in the name are Lucy's, 'Hannah' are Hannah's, "
+        "otherwise they're Brendan's.\n\n"
+
+        "STATUS VALUES (use these to understand project stages):\n"
         "- WAITING ART = awaiting artwork, not yet paid\n"
         "- PAID/WAITING ART = paid, awaiting artwork\n"
-        "- QUOTE NEEDED = needs price quote only (NOT artwork)\n"
-        "- QUOTE ADDED = quote provided, awaiting decision\n"
+        "- QUOTE NEEDED = needs price quote (not artwork)\n"
+        "- QUOTE ADDED = quote provided, waiting on decision\n"
         "- ARTWORK CONFIRMED = artwork approved, ready for production\n"
         "- PART CONFIRMED = partially confirmed\n"
-        "- PLATING = in production, plating stage\n"
-        "- POLISHING = in production, polishing stage\n"
+        "- PLATING / POLISHING = in production\n"
         "- PART SHIPPED = partially shipped\n"
-        "- SHIPPED = completed and shipped\n"
-        "- RESOLVED/SHIPPED = resolved and shipped\n"
-        "- NEEDS RESOLUTION = active problem\n\n"
-        "FILTERING RULES:\n"
-        "- 'awaiting artwork' = ONLY WAITING ART or PAID/WAITING ART\n"
-        "- 'needs quote' = ONLY QUOTE NEEDED\n"
+        "- SHIPPED / RESOLVED/SHIPPED = completed\n"
+        "- NEEDS RESOLUTION = has an active problem that needs attention\n\n"
+
+        "FILTERING (when users ask about categories):\n"
+        "- 'awaiting artwork' = WAITING ART or PAID/WAITING ART\n"
+        "- 'needs quote' = QUOTE NEEDED only\n"
         "- 'in production' = PLATING, POLISHING, or PART CONFIRMED\n"
         "- 'shipped/done' = SHIPPED or RESOLVED/SHIPPED\n"
         "- 'issues/problems' = NEEDS RESOLUTION\n"
@@ -462,9 +507,9 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1024,
+            max_tokens=4096,
             system=system_prompt,
-            messages=[{"role": "user", "content": user_message}]
+            messages=(chat_history or []) + [{"role": "user", "content": user_message}]
         )
         answer = response.content[0].text.strip()
         logger.info("Claude replied: " + str(len(answer)) + " chars")
@@ -619,10 +664,14 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     comments_data = comments_result.get("data")
     # Apply user scope filter BEFORE passing to Claude
     scoped_projects = filter_projects_by_scope(projects, scope)
+    # Get conversation history for this chat
+    chat_hist = _get_conversation(chat_id)
+    _add_to_conversation(chat_id, "user", user_text)
     if not scoped_projects and not netsuite_data:
-        answer = "Could not load project data. Check bot access to Lark Base."
+        answer = "I couldn't load project data right now. This might be a temporary issue with the Lark Base connection. Could you try again in a moment?"
     else:
-        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages, comments_data=comments_data)
+        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages, comments_data=comments_data, chat_history=chat_hist)
+    _add_to_conversation(chat_id, "assistant", answer)
     try:
         lark.send_response(answer, chat_id=chat_id)
     except Exception as e:
