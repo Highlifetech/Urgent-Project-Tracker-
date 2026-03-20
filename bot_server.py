@@ -347,7 +347,7 @@ def fetch_netsuite_data(question):
 # Cache for Lark project data
 _projects_cache = []
 _projects_cache_time = 0
-PROJECTS_CACHE_TTL = 120  # seconds
+PROJECTS_CACHE_TTL = 300  # 5 minutes — project data doesn't change that fast
 
 
 def fetch_all_projects():
@@ -457,7 +457,7 @@ def fetch_lark_wiki():
 # Gemini AI
 # -------------------------------------------------------------------------
 
-def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None, calendar_data=None, tasks_data=None, doc_data=None, contact_data=None, approval_data=None, chat_data=None, chat_history=None):
+def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedrive_data=None, wiki_pages=None, comments_data=None, calendar_data=None, tasks_data=None, doc_data=None, contact_data=None, approval_data=None, chat_data=None, chat_history=None, user_facts=None):
     if not ANTHROPIC_API_KEY:
         return "AI not available. Check ANTHROPIC_API_KEY."
     relevant = filter_relevant_projects(question, projects)
@@ -531,6 +531,13 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     chat_section = ""
     if chat_data:
         chat_section = "\n--- CHAT DATA ---\n" + json.dumps(chat_data, indent=2)[:4000] + "\n--- END CHAT ---\n"
+    facts_section = ""
+    if user_facts:
+        fact_lines = ["\n--- SAVED USER NOTES ---"]
+        for f in user_facts:
+            fact_lines.append(f"- {f['fact']}")
+        fact_lines.append("--- END SAVED NOTES ---\n")
+        facts_section = "\n".join(fact_lines)
     if scope == "hannah":
         scope_instruction = "IMPORTANT: You are speaking with Hannah. Only discuss Hannah's projects and boards. Do not mention Lucy's or Brendan's projects.\n"
     elif scope == "lucy":
@@ -598,6 +605,7 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
         contact_section +
         approval_section +
         chat_section +
+        facts_section +
         "\nQuestion: " + question
     )
     try:
@@ -686,9 +694,130 @@ def _is_already_processed(message_id):
 
 
 # -------------------------------------------------------------------------
+# Smart Question Classification (skip heavy data fetches for simple questions)
+# -------------------------------------------------------------------------
+CASUAL_PATTERNS = [
+    "hello", "hi ", "hey", "good morning", "good afternoon", "good evening",
+    "what can you do", "help me", "who are you", "what are you",
+    "thanks", "thank you", "bye", "goodbye", "see you",
+    "how are you", "what's up", "sup", "yo ", "haha", "lol",
+    "tell me a joke", "what time", "what day", "what is the date"
+]
+
+KNOWLEDGE_PATTERNS = [
+    "what does", "what is", "define", "explain", "how does",
+    "tell me about", "meaning of", "difference between",
+    "why is", "why do", "why are", "how to", "can you explain"
+]
+
+def _classify_question(text):
+    """Classify question to determine what data to fetch.
+    Returns: 'casual', 'knowledge', 'project', or 'full'
+    """
+    t = text.lower().strip()
+    # Casual greetings/chitchat - no data needed
+    for pat in CASUAL_PATTERNS:
+        if t.startswith(pat) or t == pat.strip():
+            return "casual"
+    # General knowledge questions (not about company data)
+    for pat in KNOWLEDGE_PATTERNS:
+        if t.startswith(pat) and not any(kw in t for kw in ["project", "order", "board", "status", "production", "shipped", "artwork", "quote", "client", "so#", "hlt"]):
+            return "knowledge"
+    # Check if it's a "remember" command
+    if t.startswith("remember that") or t.startswith("remember:") or t.startswith("save this"):
+        return "remember"
+    if t.startswith("what do you remember") or t.startswith("what have i told") or t.startswith("my notes") or t.startswith("show my facts"):
+        return "recall"
+    return "full"
+
+def _send_thinking(chat_id):
+    """Send a quick thinking indicator so the user knows the bot is working."""
+    try:
+        lark.send_response("\u2699\ufe0f Processing your request...", chat_id=chat_id)
+    except Exception:
+        pass
+
+# -------------------------------------------------------------------------
+# User Facts / "Remember That" System (Postgres-backed)
+# -------------------------------------------------------------------------
+def _init_facts_table():
+    """Create the user facts table if it doesn't exist."""
+    conn = _get_db_conn()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_facts (
+                    id SERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    sender_id TEXT NOT NULL DEFAULT '',
+                    fact TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_user_facts_chat
+                ON user_facts (chat_id, created_at DESC)
+            """)
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("Facts table init error: " + str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _save_fact(chat_id, sender_id, fact):
+    """Save a user fact to Postgres."""
+    conn = _get_db_conn()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO user_facts (chat_id, sender_id, fact) VALUES (%s, %s, %s)",
+                (chat_id, sender_id, fact[:2000])
+            )
+            conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("Save fact error: " + str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+def _get_facts(chat_id, limit=20):
+    """Retrieve saved facts for a chat."""
+    conn = _get_db_conn()
+    if not conn:
+        return []
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                "SELECT fact, created_at FROM user_facts WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s",
+                (chat_id, limit)
+            )
+            rows = cur.fetchall()
+            conn.commit()
+        conn.close()
+        return [{"fact": r["fact"], "saved_at": str(r["created_at"])} for r in rows]
+    except Exception as e:
+        logger.error("Get facts error: " + str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return []
+
+# -------------------------------------------------------------------------
 # Message processing (runs in background thread)
 # -------------------------------------------------------------------------
-def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
+def _process_message(user_text, chat_id, artwork_order, scope="brendan", sender_id=""):
     if artwork_order:
         answer = handle_artwork_approval(artwork_order, user_text, chat_id)
         try:
@@ -696,6 +825,79 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
         except Exception as e:
             logger.error("Send failed: " + str(e))
         return
+
+    # --- Smart classification: skip heavy fetches for simple questions ---
+    q_class = _classify_question(user_text)
+    logger.info(f"Question classified as: {q_class}")
+
+    # Handle "remember that" commands instantly
+    if q_class == "remember":
+        fact = user_text.lower().replace("remember that", "").replace("remember:", "").replace("save this:", "").strip()
+        if fact:
+            saved = _save_fact(chat_id, sender_id, fact)
+            answer = f"Got it, I'll remember that! \U0001f4dd" if saved else "I tried to save that but hit a database issue. I'll remember it for this session though."
+        else:
+            answer = "What would you like me to remember? Just say something like: remember that Carlo handles plating."
+        lark.send_response(answer, chat_id=chat_id)
+        return
+
+    # Handle "recall" commands instantly
+    if q_class == "recall":
+        facts = _get_facts(chat_id)
+        if facts:
+            lines = ["Here's what I remember: \U0001f4cb\n"]
+            for f in facts:
+                lines.append(f"\u2022 {f['fact']}")
+            answer = "\n".join(lines)
+        else:
+            answer = "I don't have any saved notes yet. You can tell me things like: remember that Lucy handles jewelry orders."
+        lark.send_response(answer, chat_id=chat_id)
+        return
+
+    # Handle casual greetings — fast response, no data fetch
+    if q_class == "casual":
+        chat_hist = _get_conversation(chat_id)
+        _add_to_conversation(chat_id, "user", user_text)
+        facts = _get_facts(chat_id, limit=5)
+        facts_context = ""
+        if facts:
+            facts_context = "\nSaved notes: " + "; ".join([f["fact"] for f in facts])
+        try:
+            response = anthropic_client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=1024,
+                system="You are IRON BOT, HLT's friendly internal assistant. Respond warmly and briefly. You're powered by Claude." + facts_context,
+                messages=(chat_hist or []) + [{"role": "user", "content": user_text}]
+            )
+            answer = response.content[0].text.strip()
+        except Exception as e:
+            answer = "Hey! How can I help you today? \U0001f44b"
+        _add_to_conversation(chat_id, "assistant", answer)
+        lark.send_response(answer, chat_id=chat_id)
+        return
+
+    # Handle general knowledge — use Haiku, no data fetch
+    if q_class == "knowledge":
+        chat_hist = _get_conversation(chat_id)
+        _add_to_conversation(chat_id, "user", user_text)
+        facts = _get_facts(chat_id, limit=5)
+        facts_context = ""
+        if facts:
+            facts_context = "\nSaved notes: " + "; ".join([f["fact"] for f in facts])
+        try:
+            response = anthropic_client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=2048,
+                system="You are IRON BOT, HLT's internal assistant powered by Claude. Answer knowledge questions thoughtfully and conversationally. If the question seems like it might relate to company data, suggest the user ask more specifically." + facts_context,
+                messages=(chat_hist or []) + [{"role": "user", "content": user_text}]
+            )
+            answer = response.content[0].text.strip()
+        except Exception as e:
+            answer = "I had trouble processing that. Could you try rephrasing?"
+        _add_to_conversation(chat_id, "assistant", answer)
+        lark.send_response(answer, chat_id=chat_id)
+        return
+
     # --- Command routing: detect specialized commands and route to handlers ---
     cmd_type = detect_command_type(user_text)
     if cmd_type == "calendar":
@@ -716,7 +918,10 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     elif cmd_type == "chat":
         handle_chat_management(user_text, chat_id, scope)
         return
-    # --- End command routing (falls through to general handler for "general" and "sheet" types) ---
+    # --- End command routing ---
+
+    # Full question — send thinking indicator, then fetch all data
+    threading.Thread(target=_send_thinking, args=(chat_id,), daemon=True).start()
 
     netsuite_result = {}
     projects_result = {}
@@ -751,8 +956,10 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     t3 = threading.Thread(target=get_pipedrive)
     t4 = threading.Thread(target=get_wiki)
     t5 = threading.Thread(target=get_comments)
-    t1.start(); t2.start(); t3.start(); t4.start(); t5.start()
-    t1.join(); t2.join(); t3.join(); t4.join(); t5.join()
+    for t in [t1, t2, t3, t4, t5]:
+        t.start()
+    for t in [t1, t2, t3, t4, t5]:
+        t.join(timeout=15)
     projects = projects_result.get("data", [])
     netsuite_data = netsuite_result.get("data")
     pipedrive_data = pipedrive_result.get("data")
@@ -760,13 +967,14 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan"):
     comments_data = comments_result.get("data")
     # Apply user scope filter BEFORE passing to Claude
     scoped_projects = filter_projects_by_scope(projects, scope)
-    # Get conversation history for this chat
+    # Get conversation history and saved facts for this chat
     chat_hist = _get_conversation(chat_id)
     _add_to_conversation(chat_id, "user", user_text)
+    facts = _get_facts(chat_id, limit=10)
     if not scoped_projects and not netsuite_data:
         answer = "I couldn't load project data right now. This might be a temporary issue with the Lark Base connection. Could you try again in a moment?"
     else:
-        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages, comments_data=comments_data, chat_history=chat_hist)
+        answer = ask_gemini(user_text, scoped_projects, netsuite_data, scope=scope, pipedrive_data=pipedrive_data, wiki_pages=wiki_pages, comments_data=comments_data, chat_history=chat_hist, user_facts=facts)
     _add_to_conversation(chat_id, "assistant", answer)
     try:
         lark.send_response(answer, chat_id=chat_id)
@@ -859,7 +1067,7 @@ def webhook():
     artwork_order = detect_artwork_approval(user_text)
     threading.Thread(
         target=_process_message,
-        args=(user_text, chat_id, artwork_order, scope),
+        args=(user_text, chat_id, artwork_order, scope, sender_open_id),
         daemon=True
     ).start()
     return jsonify({"code": 0})
@@ -1480,6 +1688,7 @@ def create_project_chat():
 # Startup
 # -------------------------------------------------------------------------
 _init_db()  # Initialize Postgres conversation tables
+_init_facts_table()  # Initialize Postgres user facts table
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 
 if __name__ == "__main__":
