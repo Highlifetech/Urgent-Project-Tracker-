@@ -1,4 +1,4 @@
-import os
+undefinedimport os
 import logging
 import json
 import re
@@ -62,7 +62,7 @@ def _init_db():
     """Create conversation tables if they don't exist."""
     conn = _get_db_conn()
     if not conn:
-        logger.warning("DATABASE_URL not set — conversation memory will be in-memory only (non-persistent)")
+        logger.warning("DATABASE_URL not set â conversation memory will be in-memory only (non-persistent)")
         return False
     try:
         with conn.cursor() as cur:
@@ -347,7 +347,7 @@ def fetch_netsuite_data(question):
 # Cache for Lark project data
 _projects_cache = []
 _projects_cache_time = 0
-PROJECTS_CACHE_TTL = 300  # 5 minutes — project data doesn't change that fast
+PROJECTS_CACHE_TTL = 300  # 5 minutes â project data doesn't change that fast
 
 
 def fetch_all_projects():
@@ -547,30 +547,30 @@ def ask_gemini(question, projects, netsuite_data=None, scope="brendan", pipedriv
     system_prompt = (
         scope_instruction +
         "You are IRON BOT, the intelligent assistant for HLT (High Life Tech / Highlife Tech). "
-        "You are powered by Claude and should respond the way Claude would — thoughtful, helpful, "
+        "You are powered by Claude and should respond the way Claude would â thoughtful, helpful, "
         "conversational, and thorough. You have access to live company data including projects, "
         "production status, shipping, clients, CRM (Pipedrive), financials (NetSuite), calendar, "
         "tasks, documents, wiki, contacts, approvals, email, and chat management.\n\n"
 
         "HOW TO RESPOND:\n"
         "- Be natural and conversational. Talk like a knowledgeable team member, not a database.\n"
-        "- Give complete, thoughtful answers. If someone asks about a project, provide context — "
+        "- Give complete, thoughtful answers. If someone asks about a project, provide context â "
         "what stage it's at, what's coming next, any concerns or deadlines approaching.\n"
         "- Be proactive: if you notice something relevant (like an overdue item, an upcoming deadline, "
         "or a potential issue), mention it even if they didn't ask.\n"
-        "- When listing items, organize them clearly but don't just dump raw data — summarize and "
+        "- When listing items, organize them clearly but don't just dump raw data â summarize and "
         "highlight what matters.\n"
         "- If you're unsure about something or the data is incomplete, say so honestly and suggest "
         "what they could do to find out.\n"
         "- Use a warm, professional tone. You're part of the team.\n"
-        "- You can handle follow-up questions — conversation history is provided when available.\n"
-        "- For general knowledge questions (not about company data), answer them like Claude would — "
+        "- You can handle follow-up questions â conversation history is provided when available.\n"
+        "- For general knowledge questions (not about company data), answer them like Claude would â "
         "you're not limited to just company data queries.\n\n"
 
         "COMPANY DATA KNOWLEDGE:\n"
         "- 'Due Date' in the data = 'In Hand Date' (the date the client needs delivery). "
         "Always refer to it as 'In Hand Date' when talking to the team.\n"
-        "- Timestamps in the data are Unix milliseconds — always convert them to readable dates.\n"
+        "- Timestamps in the data are Unix milliseconds â always convert them to readable dates.\n"
         "- Board ownership: tables with 'Lucy' in the name are Lucy's, 'Hannah' are Hannah's, "
         "otherwise they're Brendan's.\n\n"
 
@@ -669,7 +669,7 @@ def handle_artwork_approval(order_num, user_text, chat_id):
         target_chat = artwork_chats[0][1]
     try:
         lark.update_record_status(record, ARTWORK_CONFIRMED_STATUS, FIELD_PRODUCTION_DRAWING)
-        msg = f"✅ Artwork confirmed for {order_num}. Status updated to '{ARTWORK_CONFIRMED_STATUS}'."
+        msg = f"â Artwork confirmed for {order_num}. Status updated to '{ARTWORK_CONFIRMED_STATUS}'."
         if target_chat and target_chat != chat_id:
             lark.send_response(msg, chat_id=target_chat)
         return msg
@@ -854,7 +854,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan", sender_
         lark.send_response(answer, chat_id=chat_id)
         return
 
-    # Handle casual greetings — fast response, no data fetch
+    # Handle casual greetings â fast response, no data fetch
     if q_class == "casual":
         chat_hist = _get_conversation(chat_id)
         _add_to_conversation(chat_id, "user", user_text)
@@ -876,7 +876,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan", sender_
         lark.send_response(answer, chat_id=chat_id)
         return
 
-    # Handle general knowledge — use Haiku, no data fetch
+    # Handle general knowledge â use Haiku, no data fetch
     if q_class == "knowledge":
         chat_hist = _get_conversation(chat_id)
         _add_to_conversation(chat_id, "user", user_text)
@@ -920,7 +920,7 @@ def _process_message(user_text, chat_id, artwork_order, scope="brendan", sender_
         return
     # --- End command routing ---
 
-    # Full question — send thinking indicator, then fetch all data
+    # Full question â send thinking indicator, then fetch all data
     threading.Thread(target=_send_thinking, args=(chat_id,), daemon=True).start()
 
     netsuite_result = {}
@@ -1262,7 +1262,7 @@ def build_morning_digest(projects):
     def fmt(p):
         order_num = p.get("Order #", "") or p.get("Sales Order", "") or p.get("SO#", "") or "No SO#"
         status = p.get("Status", "")
-        return f"- SO#{order_num} | {status}"
+        return f"- #{order_num} | {status}"
 
     sections = []
     sections.append(f"Today is {today.strftime('%A, %B %d %Y')}.")
@@ -1291,13 +1291,13 @@ def build_morning_digest(projects):
     data_summary = "\n".join(sections)
 
     system_prompt = (
-        "You are IRON BOT — the HLT (Highlife Tech) internal assistant. "
+        "You are IRON BOT â the HLT (Highlife Tech) internal assistant. "
         "Write a morning briefing for the team. Be concise, direct, and actionable. "
-        "Use emojis sparingly for visual scanning (🔴 overdue, 🟡 due soon, 🔵 in production, ⚪ awaiting art). "
+        "Use emojis sparingly for visual scanning (ð´ overdue, ð¡ due soon, ðµ in production, âª awaiting art). "
         "Your digest MUST include these 4 sections in order: "
-        "## NEEDS ARTWORK — X projects | "
-        "## OVERDUE — X projects | "
-        "## DUE WITHIN 7 DAYS — X projects | "
+        "## NEEDS ARTWORK â X projects | "
+        "## OVERDUE â X projects | "
+        "## DUE WITHIN 7 DAYS â X projects | "
         "## TODAY'S PRIORITY LIST (numbered, most urgent first). "
         "IMPORTANT RULES:\n"
         "- DO NOT include any master tables or quotes boards in the digest.\n"
@@ -1305,6 +1305,7 @@ def build_morning_digest(projects):
         "- For each status section (NEEDS ARTWORK, OVERDUE, DUE WITHIN 7 DAYS, IN PRODUCTION), "
         "list the actual sales order numbers (SO#) for every project in that group, not just counts.\n"
         "- Do NOT show raw data tables or quotes board data anywhere in the digest.\n"
+        "- For IN PRODUCTION and other status lists, display each order on its OWN LINE as a bullet point (one order per row). NEVER join multiple orders on one line with pipes or commas.\n"
         "Use the exact counts from the data. Lead with overdue, then due-soon. "
         "End with a one-line morale note if the day looks heavy."
     )
@@ -1334,7 +1335,7 @@ def morning_digest():
 
     chat_id = os.environ.get("LARK_CHAT_ID_DIGEST", "")
     if not chat_id:
-        return jsonify({"error": "LARK_CHAT_ID_DIGEST not configured — morning digest can only post to the designated digest channel"}), 500
+        return jsonify({"error": "LARK_CHAT_ID_DIGEST not configured â morning digest can only post to the designated digest channel"}), 500
 
     try:
         projects = fetch_all_projects()
