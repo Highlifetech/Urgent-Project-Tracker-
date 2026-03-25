@@ -1,4 +1,235 @@
-import os
+
+
+
+# =========================================================================
+# BOT CHAT Q&A (existing functionality preserved)
+# =========================================================================
+
+def get_user_scope(sender_open_id):
+        if sender_open_id == HANNAH_OPEN_ID:
+                    return "hannah"
+                if sender_open_id == LUCY_OPEN_ID:
+                            return "lucy"
+                        return "brendan"
+
+def extract_question(msg):
+        try:
+                    content = json.loads(msg.get("content", "{}"))
+                    raw_text = content.get("text", "").strip()
+except Exception:
+        return None
+    if not raw_text:
+                return None
+            if msg.get("chat_type", "") == "p2p":
+                        return raw_text
+                    mentions = msg.get("mentions", [])
+    bot_mentioned = False
+    for mention in mentions:
+                mid = mention.get("id", {})
+                mention_open_id = mid.get("open_id", "")
+                mention_name = mention.get("name", "")
+                if BOT_OPEN_ID and mention_open_id == BOT_OPEN_ID:
+                                bot_mentioned = True
+                                break
+                            if BOT_NAME and BOT_NAME.lower() in mention_name.lower():
+                                            bot_mentioned = True
+                                            break
+                                    if not bot_mentioned:
+                                                return None
+                                            clean = re.sub(r'@[^\s]+', '', raw_text).strip()
+    return clean if clean else raw_text
+
+def build_context(projects):
+        today = datetime.now(timezone.utc)
+    lines = [f"Today is {today.strftime('%A %B %d %Y')}.", f"Total records: {len(projects)}", ""]
+    for p in projects[:200]:
+                tname = p.get("__table_name__", "Unknown")
+        parts = [f"[Board: {tname}]"]
+        for key, val in p.items():
+                        if key.startswith("__"):
+                                            continue
+                                        parts.append(f"{key}: {field_to_text(val)}")
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+def _process_message(user_text, chat_id, scope="brendan", sender_id=""):
+        try:
+                    projects = fetch_all_projects()
+                    if scope != "brendan":
+                                    projects = [p for p in projects if scope in p.get("__table_name__", "").lower()]
+                                chat_hist = _get_conversation(chat_id)
+                    _add_to_conversation(chat_id, "user", user_text)
+                    context = build_context(projects)
+                    system_prompt = (
+                                    "You are IRON BOT, the HLT (Highlife Tech) internal assistant powered by Claude. "
+                                    "Be conversational, helpful, and proactive. 'Due Date' = 'In Hand Date'. "
+                                    "Timestamps in data are Unix milliseconds. Convert to readable dates. "
+                                    "STATUS: WAITING ART=awaiting artwork, ARTWORK CONFIRMED=approved, "
+                                    "PLATING/POLISHING=in production, SHIPPED=done, NEEDS RESOLUTION=problem."
+                    )
+                    user_message = f"--- LARK DATA ---\n{context}\n--- END ---\n\nQuestion: {user_text}"
+                    response = anthropic_client.messages.create(
+                                    model="claude-sonnet-4-6", max_tokens=4096, system=system_prompt,
+                                    messages=(chat_hist or []) + [{"role": "user", "content": user_message}])
+                    answer = response.content[0].text.strip()
+                    _add_to_conversation(chat_id, "assistant", answer)
+                    lark.send_group_message(answer, chat_id=chat_id)
+except Exception as e:
+            logger.error(f"Process message error: {e}")
+            lark.send_group_message(f"Error: {str(e)[:200]}", chat_id=chat_id)
+    
+    def _is_already_processed(message_id):
+            now = time.time()
+            expired = [mid for mid, ts in processed_message_ids.items() if now - ts > DEDUP_TTL]
+            for mid in expired:
+                        del processed_message_ids[mid]
+                    if message_id in processed_message_ids:
+                                return True
+                            processed_message_ids[message_id] = now
+    return False
+
+
+# =========================================================================
+# FLASK ROUTES
+# =========================================================================
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+        body = request.get_json(silent=True) or {}
+    if body.get("type") == "url_verification":
+                return jsonify({"challenge": body.get("challenge", "")})
+            event = body.get("event", {})
+    msg = event.get("message", {})
+    if msg.get("message_type") != "text":
+                return jsonify({"code": 0})
+            message_id = msg.get("message_id", "")
+    if _is_already_processed(message_id):
+                return jsonify({"code": 0})
+            user_text = extract_question(msg)
+    if not user_text:
+                return jsonify({"code": 0})
+            chat_id = msg.get("chat_id", "")
+    if not chat_id:
+                return jsonify({"code": 0})
+            sender = event.get("sender", {})
+            sender_open_id = sender.get("sender_id", {}).get("open_id", "")
+            scope = get_user_scope(sender_open_id)
+            threading.Thread(target=_process_message, args=(user_text, chat_id, scope, sender_open_id), daemon=True).start()
+            return jsonify({"code": 0})
+        
+@app.route("/card-callback", methods=["POST"])
+def card_callback():
+        body = request.get_json(silent=True) or {}
+        if body.get("type") == "url_verification":
+                    return jsonify({"challenge": body.get("challenge", "")})
+                result = handle_card_callback(body)
+    return jsonify(result)
+
+@app.route("/notify", methods=["POST"])
+def notify_endpoint():
+        body = request.get_json(silent=True) or {}
+    table_id = body.get("table_id", "")
+    record_id = body.get("record_id", "")
+    if not table_id or not record_id:
+                return jsonify({"error": "table_id and record_id required"}), 400
+            result = handle_notify_button(table_id, record_id)
+    return jsonify(result)
+
+@app.route("/update-team", methods=["POST"])
+def update_team_endpoint():
+        body = request.get_json(silent=True) or {}
+    table_id = body.get("table_id", "")
+    record_id = body.get("record_id", "")
+    if not table_id or not record_id:
+                return jsonify({"error": "table_id and record_id required"}), 400
+            result = handle_update_team_button(table_id, record_id)
+    return jsonify(result)
+
+@app.route("/morning-digest", methods=["POST", "GET"])
+def morning_digest():
+        digest_secret = DIGEST_SECRET
+    if digest_secret:
+                provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+                if provided != digest_secret:
+                                return jsonify({"error": "Unauthorized"}), 401
+                        chat_id = LARK_CHAT_ID_FOUNDERS or LARK_CHAT_ID_DIGEST
+    if not chat_id:
+                return jsonify({"error": "No digest channel configured"}), 500
+    try:
+                projects = fetch_all_projects()
+        if not projects:
+                        return jsonify({"error": "No data"}), 500
+        digest = build_morning_digest(projects)
+        card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83c\udf05 Morning Digest - {datetime.now(timezone.utc).strftime('%B %d, %Y')}"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": digest}]}
+        lark.send_card(card, chat_id=chat_id)
+        send_due_date_alerts()
+        return jsonify({"status": "ok", "length": len(digest)})
+except Exception as e:
+        logger.error(f"Digest error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/event", methods=["POST"])
+def event_subscription():
+        body = request.get_json(silent=True) or {}
+    if body.get("type") == "url_verification":
+                return jsonify({"challenge": body.get("challenge", "")})
+    header = body.get("header", {})
+    event_type = header.get("event_type", "")
+    event = body.get("event", {})
+    logger.info(f"Event: {event_type}")
+    if event_type == "im.chat.member.bot.added_v1":
+                chat_id = event.get("chat_id", "")
+        if chat_id:
+                        lark.send_text("Hello! I'm IRON BOT. @ mention me with any question.", chat_id=chat_id)
+    return jsonify({"code": 0})
+
+@app.route("/health", methods=["GET"])
+def health():
+        return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "version": "2.0"})
+
+@app.route("/debug", methods=["GET"])
+def debug():
+        return jsonify({
+                    "version": "2.0-features",
+                    "claude_ready": bool(ANTHROPIC_API_KEY),
+                    "founders_chat": bool(LARK_CHAT_ID_FOUNDERS or LARK_CHAT_ID_DIGEST),
+                    "hannah_chat": bool(LARK_CHAT_ID_HANNAH),
+                    "lucy_chat": bool(LARK_CHAT_ID_LUCY),
+                    "bot_open_id": BOT_OPEN_ID,
+                    "features": ["notify", "update_team", "morning_digest", "due_date_alerts"],
+        })
+
+@app.route("/test-notify/<table_id>/<record_id>", methods=["GET"])
+def test_notify(table_id, record_id):
+        result = handle_notify_button(table_id, record_id)
+    return jsonify(result)
+
+@app.route("/test-update-team/<table_id>/<record_id>", methods=["GET"])
+def test_update_team(table_id, record_id):
+        result = handle_update_team_button(table_id, record_id)
+    return jsonify(result)
+
+@app.route("/test-alerts", methods=["GET"])
+def test_alerts():
+        try:
+                    send_due_date_alerts()
+                    return jsonify({"status": "ok"})
+except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route("/", methods=["GET"])
+def index():
+        return jsonify({"code": 0, "bot": "Iron Bot v2.0", "features": 4})
+    
+# =========================================================================
+# STARTUP
+# =========================================================================
+_init_db()
+threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
+
+if __name__ == "__main__":
+        port = int(os.environ.get("PORT", 8080))
+        app.run(host="0.0.0.0", port=port, debug=False)import os
 import logging
 import json
 import re
