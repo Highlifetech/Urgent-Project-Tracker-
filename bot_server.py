@@ -334,14 +334,20 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
-    status_aid = f"status_request_{table_id}_{record_id}"
-    if _is_action_clicked(status_aid):
-        status_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Status Requested \u2713"}, "type": "default", "disabled": True}
-    else:
-        status_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcca Request Status Update"}, "type": "danger", "value": {"action": status_aid, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    elements.append({"tag": "action", "actions": [status_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Update: {order_num}"}, "template": "purple"}, "elements": elements}
+
+def build_status_request_card(order_num, assigned_to, table_id, record_id):
+    link = record_link(table_id, record_id)
+    action_id = f"mark_updated_{table_id}_{record_id}"
+    elements = [{"tag": "markdown", "content": f"**📊 Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in the **In-Hand Date** on the record."}]
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "📎 View Record"}, "type": "default", "url": link}
+    if _is_action_clicked(action_id):
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated ✓"}, "type": "default", "disabled": True}
+    else:
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "✅ Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+    elements.append({"tag": "action", "actions": [view_btn, update_btn]})
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"📊 Status Request — {order_num}"}, "template": "orange"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
     try:
@@ -364,6 +370,29 @@ def handle_update_team_button(table_id, record_id):
         return {"status": "ok", "order": order_num, "routed_to": assigned_to}
     except Exception as e:
         logger.error(f"Update Team error: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+def handle_status_request_button(table_id, record_id):
+    try:
+        record = lark.get_record(table_id, record_id)
+        fields = record.get("fields", {})
+        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+        assigned_to = get_assigned_to(fields)
+        if assigned_to == "Brendan":
+            tables = lark.get_all_tables()
+            for t in tables:
+                if t.get("table_id") == table_id:
+                    assigned_to = get_assigned_from_table(t.get("name", ""))
+                    break
+        card = build_status_request_card(order_num, assigned_to, table_id, record_id)
+        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
+        if target:
+            lark.send_card(card, chat_id=target)
+        logger.info(f"Status Request card for {order_num} to {assigned_to}")
+        return {"status": "ok", "order": order_num, "assigned_to": assigned_to}
+    except Exception as e:
+        logger.error(f"Status Request error: {e}")
         return {"status": "error", "detail": str(e)}
 
 # =========================================================================
@@ -544,24 +573,16 @@ def handle_card_callback(body):
         if FOUNDERS_CHAT:
             lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Acknowledged"}}
-    if action_str.startswith("status_request_"):
+    if action_str.startswith("mark_updated_"):
         if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already requested"}}
+            return {"toast": {"type": "info", "content": "Already updated"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
-        assigned_to = action_value.get("assigned_to", "")
-        t_id = action_value.get("table_id", "")
-        r_id = action_value.get("record_id", "")
-        link = record_link(t_id, r_id) if t_id and r_id else ""
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        status_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcca Status Update Requested"}, "template": "orange"}, "elements": [{"tag": "markdown", "content": f"**Brendan** is requesting a status update for **{order_num}**\n\nPlease:\n1. Add a comment on the record with the current production status\n2. Update the **In-Hand Date** field if it has changed\n\n[Open Record]({link})"}, {"tag": "note", "elements": [{"tag": "plain_text", "content": f"Requested at {now_str}"}]}]}
-        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
-        if target:
-            lark.send_card(status_card, chat_id=target)
+        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Status Updated"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as updated - {now_str}"}]}
         if FOUNDERS_CHAT:
-            confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Status Update Requested"}, "template": "orange"}, "elements": [{"tag": "markdown", "content": f"Status update requested from **{assigned_to}** for **{order_num}**"}]}
             lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
-        return {"toast": {"type": "success", "content": f"Status update requested from {assigned_to}"}}
+        return {"toast": {"type": "success", "content": "Marked as updated"}}
     return {"toast": {"type": "info", "content": "Processed"}}
 
 # =========================================================================
@@ -695,6 +716,17 @@ def update_team_endpoint():
         return jsonify({"error": "table_id and record_id required"}), 400
     return jsonify(handle_update_team_button(table_id, record_id))
 
+
+@app.route("/status-request", methods=["POST"])
+def status_request_endpoint():
+    body = request.get_json(silent=True) or {}
+    table_id = body.get("table_id", "")
+    record_id = body.get("record_id", "")
+    if not table_id or not record_id:
+        return jsonify({"error": "table_id and record_id required"}), 400
+    return jsonify(handle_status_request_button(table_id, record_id))
+
+
 @app.route("/morning-digest", methods=["POST", "GET"])
 def morning_digest():
     if DIGEST_SECRET:
@@ -730,7 +762,7 @@ def health():
 
 @app.route("/debug", methods=["GET"])
 def debug():
-    return jsonify({"version": "2.0", "claude_ready": bool(ANTHROPIC_API_KEY), "founders_chat": bool(FOUNDERS_CHAT), "hannah_chat": bool(LARK_CHAT_ID_HANNAH), "lucy_chat": bool(LARK_CHAT_ID_LUCY), "bot_open_id": BOT_OPEN_ID, "features": ["notify", "update_team", "morning_digest", "due_date_alerts"]})
+    return jsonify({"version": "2.0", "claude_ready": bool(ANTHROPIC_API_KEY), "founders_chat": bool(FOUNDERS_CHAT), "hannah_chat": bool(LARK_CHAT_ID_HANNAH), "lucy_chat": bool(LARK_CHAT_ID_LUCY), "bot_open_id": BOT_OPEN_ID, "features": ["notify", "update_team", "status_request", "morning_digest", "due_date_alerts"]})
 
 @app.route("/test-notify/<table_id>/<record_id>", methods=["GET"])
 def test_notify(table_id, record_id):
@@ -739,6 +771,10 @@ def test_notify(table_id, record_id):
 @app.route("/test-update-team/<table_id>/<record_id>", methods=["GET"])
 def test_update_team(table_id, record_id):
     return jsonify(handle_update_team_button(table_id, record_id))
+
+@app.route("/test-status-request/<table_id>/<record_id>", methods=["GET"])
+def test_status_request(table_id, record_id):
+    return jsonify(handle_status_request_button(table_id, record_id))
 
 @app.route("/test-alerts", methods=["GET"])
 def test_alerts():
@@ -772,4 +808,5 @@ threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
