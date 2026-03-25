@@ -1,54 +1,20 @@
-name: Iron Bot Morning Digest
+name: Iron Bot Morning Digest + Due Date Alerts
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'   # 8am ET (UTC-5) Mon-Fri
-    - cron: '0 12 * * 1-5'   # 8am ET (UTC-4 daylight saving) Mon-Fri
-  workflow_dispatch:           # Allow manual trigger
+      - cron: '0 13 * * 1-5'  # 8am ET (UTC-5) Mon-Fri
+          - cron: '0 12 * * 1-5'  # 8am ET (UTC-4 daylight saving) Mon-Fri
+            workflow_dispatch:
 
-jobs:
-  morning-digest:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger morning digest
-        run: |
-          curl -X POST \
-            -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
-            -H "Content-Type: application/json" \
-            --fail-with-body \
-            https://web-production-f965d.up.railway.app/morning-digest
-        timeout-minutes: 2
-
-  check-due-dates:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: pip install requests
-      - name: Run project due date tracker
-        env:
-          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
-          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
-          LARK_BASE_URL: ${{ secrets.LARK_BASE_URL }}
-          LARK_BASE_APP_TOKEN: ${{ secrets.LARK_BASE_APP_TOKEN }}
-          LARK_CHAT_ID_HANNAH: ${{ secrets.LARK_CHAT_ID_HANNAH }}
-          LARK_CHAT_ID_LUCY: ${{ secrets.LARK_CHAT_ID_LUCY }}
-          LARK_CHAT_ID_CHEN: ${{ secrets.LARK_CHAT_ID_CHEN }}
-          LARK_CHAT_ID_MASTER: ${{ secrets.LARK_CHAT_ID_MASTER }}
-          LARK_CHAT_ID_HANNAH_ARTWORK: ${{ secrets.LARK_CHAT_ID_HANNAH_ARTWORK }}
-          LARK_CHAT_ID_LUCY_ARTWORK: ${{ secrets.LARK_CHAT_ID_LUCY_ARTWORK }}
-          LARK_CHAT_ID_SHIPMENTS_LUCY: ${{ secrets.LARK_CHAT_ID_SHIPMENTS_LUCY }}
-          LARK_CHAT_ID_HLT_DESIGN: ${{ secrets.LARK_CHAT_ID_HLT_DESIGN }}
-          LARK_CHAT_ID_ORDER_ISSUES_HANNAH: ${{ secrets.LARK_CHAT_ID_ORDER_ISSUES_HANNAH }}
-          LARK_CHAT_ID_ORDER_ISSUES_LUCY: ${{ secrets.LARK_CHAT_ID_ORDER_ISSUES_LUCY }}
-          LARK_CHAT_ID_QUOTES_HANNAH: ${{ secrets.LARK_CHAT_ID_QUOTES_HANNAH }}
-          LARK_CHAT_ID_QUOTES_LUCY: ${{ secrets.LARK_CHAT_ID_QUOTES_LUCY }}
-          LARK_CHAT_ID_SAMPLES_LUCY: ${{ secrets.LARK_CHAT_ID_SAMPLES_LUCY }}
-          LARK_CHAT_ID_HLT_CARLO: ${{ secrets.LARK_CHAT_ID_HLT_CARLO }}
-          LARK_CHAT_ID_HLT_INBOUND: ${{ secrets.LARK_CHAT_ID_HLT_INBOUND }}
-        run: python main.py
+            jobs:
+              morning-digest-and-alerts:
+                  runs-on: ubuntu-latest
+                      steps:
+                            - name: Trigger morning digest + due date alerts
+                                    run: |
+                                              curl -X POST \
+                                                          -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
+                                                                      -H "Content-Type: application/json" \
+                                                                                  --fail-with-body \
+                                                                                              https://web-production-f965d.up.railway.app/morning-digest
+                                                                                                      timeout-minutes: 3
