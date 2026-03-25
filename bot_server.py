@@ -334,7 +334,13 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+    status_aid = f"status_request_{table_id}_{record_id}"
+    if _is_action_clicked(status_aid):
+        status_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Status Requested \u2713"}, "type": "default", "disabled": True}
+    else:
+        status_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcca Request Status Update"}, "type": "danger", "value": {"action": status_aid, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
+    elements.append({"tag": "action", "actions": [status_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Update: {order_num}"}, "template": "purple"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
@@ -538,6 +544,24 @@ def handle_card_callback(body):
         if FOUNDERS_CHAT:
             lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Acknowledged"}}
+    if action_str.startswith("status_request_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already requested"}}
+        _mark_action_clicked(action_str, operator_name)
+        order_num = action_value.get("order_num", "")
+        assigned_to = action_value.get("assigned_to", "")
+        t_id = action_value.get("table_id", "")
+        r_id = action_value.get("record_id", "")
+        link = record_link(t_id, r_id) if t_id and r_id else ""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        status_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcca Status Update Requested"}, "template": "orange"}, "elements": [{"tag": "markdown", "content": f"**Brendan** is requesting a status update for **{order_num}**\n\nPlease:\n1. Add a comment on the record with the current production status\n2. Update the **In-Hand Date** field if it has changed\n\n[Open Record]({link})"}, {"tag": "note", "elements": [{"tag": "plain_text", "content": f"Requested at {now_str}"}]}]}
+        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
+        if target:
+            lark.send_card(status_card, chat_id=target)
+        if FOUNDERS_CHAT:
+            confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Status Update Requested"}, "template": "orange"}, "elements": [{"tag": "markdown", "content": f"Status update requested from **{assigned_to}** for **{order_num}**"}]}
+            lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
+        return {"toast": {"type": "success", "content": f"Status update requested from {assigned_to}"}}
     return {"toast": {"type": "info", "content": "Processed"}}
 
 # =========================================================================
