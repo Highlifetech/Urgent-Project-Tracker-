@@ -723,6 +723,17 @@ def test_alerts():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/list-chats", methods=["GET"])
+def list_chats():
+    try:
+        chats = lark.list_chats()
+        result = []
+        for c in chats:
+            result.append({"chat_id": c.get("chat_id", ""), "name": c.get("name", ""), "owner_id": c.get("owner_id", "")})
+        return jsonify({"chats": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/", methods=["GET"])
 def index():
     return jsonify({"code": 0, "bot": "Iron Bot v2.0", "features": 4})
