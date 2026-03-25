@@ -33,7 +33,8 @@ from config import (
     LARK_CHAT_ID_DIGEST, DIGEST_SECRET,
 )
 
-FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_DIGEST", "")
+FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
+DIGEST_CHAT = os.environ.get("LARK_CHAT_ID_DIGEST", "")
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "")
@@ -676,7 +677,7 @@ def morning_digest():
         provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
-    chat_id = FOUNDERS_CHAT
+    chat_id = DIGEST_CHAT
     if not chat_id:
         return jsonify({"error": "No digest channel"}), 500
     try:
