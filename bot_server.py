@@ -560,7 +560,7 @@ def handle_card_callback(body):
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as resolved - {now_str}"}]}
         if FOUNDERS_CHAT:
-            lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
+            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
         return {"toast": {"type": "success", "content": "Marked resolved"}}
     if action_str.startswith("ack_"):
         if _is_action_clicked(action_str):
@@ -571,7 +571,7 @@ def handle_card_callback(body):
         status = action_value.get("status", "")
         confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Update Acknowledged"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** acknowledged **{order_num}** - In-Hand: {date_str} - Status: {status}"}]}
         if FOUNDERS_CHAT:
-            lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
+            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
         return {"toast": {"type": "success", "content": "Acknowledged"}}
     if action_str.startswith("mark_updated_"):
         if _is_action_clicked(action_str):
@@ -581,7 +581,7 @@ def handle_card_callback(body):
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Status Updated"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as updated - {now_str}"}]}
         if FOUNDERS_CHAT:
-            lark.send_card(confirm, chat_id=FOUNDERS_CHAT)
+            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
         return {"toast": {"type": "success", "content": "Marked as updated"}}
     return {"toast": {"type": "info", "content": "Processed"}}
 
