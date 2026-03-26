@@ -335,19 +335,21 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated — {order_num}"}, "template": "purple"}, "elements": elements}
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated â {order_num}"}, "template": "purple"}, "elements": elements}
 
-def build_status_request_card(order_num, assigned_to, table_id, record_id):
+def build_status_request_card(order_num, assigned_to, table_id, record_id, image_key=""):
     link = record_link(table_id, record_id)
     action_id = f"mark_updated_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**📊 Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in the **In-Hand Date** on the record."}]
-    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "📎 View Record"}, "type": "default", "url": link}
+    elements = [{"tag": "markdown", "content": f"**ð Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in an estimated ship date for Brendan. Please be mindful of the in-hands date and if there is any issue, notify Brendan."}]
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "ð View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated ✓"}, "type": "default", "disabled": True}
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated â"}, "type": "default", "disabled": True}
     else:
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "✅ Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "â Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, update_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"📊 Status Request — {order_num}"}, "template": "orange"}, "elements": elements}
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"ð Status Request â {order_num}"}, "template": "orange"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
     try:
@@ -385,7 +387,8 @@ def handle_status_request_button(table_id, record_id):
                 if t.get("table_id") == table_id:
                     assigned_to = get_assigned_from_table(t.get("name", ""))
                     break
-        card = build_status_request_card(order_num, assigned_to, table_id, record_id)
+        image_key = get_image_key_from_field(fields)
+        card = build_status_request_card(order_num, assigned_to, table_id, record_id, image_key)
         target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
         if target:
             lark.send_card(card, chat_id=target)
