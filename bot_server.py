@@ -328,14 +328,14 @@ def handle_notify_button(table_id, record_id):
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}\n**From:** Brendan"}]
+    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}\n**Updated by:** {assigned_to}"}]
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Update: {order_num}"}, "template": "purple"}, "elements": elements}
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated — {order_num}"}, "template": "purple"}, "elements": elements}
 
 def build_status_request_card(order_num, assigned_to, table_id, record_id):
     link = record_link(table_id, record_id)
@@ -363,7 +363,7 @@ def handle_update_team_button(table_id, record_id):
                     assigned_to = get_assigned_from_table(t.get("name", ""))
                     break
         card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
-        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
+        target = FOUNDERS_CHAT
         if target:
             lark.send_card(card, chat_id=target)
         logger.info(f"Update Team card for {order_num} to {assigned_to}")
