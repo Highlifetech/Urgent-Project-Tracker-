@@ -391,7 +391,12 @@ def handle_status_request_button(table_id, record_id):
         card = build_status_request_card(order_num, assigned_to, table_id, record_id, image_key)
         target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
         if target:
-            lark.send_card(card, chat_id=target)
+            try:
+                lark.send_card(card, chat_id=target)
+            except Exception as card_err:
+                logger.warning(f"Card with image failed, retrying without: {card_err}")
+                card = build_status_request_card(order_num, assigned_to, table_id, record_id)
+                lark.send_card(card, chat_id=target)
         logger.info(f"Status Request card for {order_num} to {assigned_to}")
         return {"status": "ok", "order": order_num, "assigned_to": assigned_to}
     except Exception as e:
