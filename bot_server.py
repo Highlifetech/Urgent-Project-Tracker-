@@ -335,21 +335,21 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated â {order_num}"}, "template": "purple"}, "elements": elements}
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
 
 def build_status_request_card(order_num, assigned_to, table_id, record_id, image_key=""):
     link = record_link(table_id, record_id)
     action_id = f"mark_updated_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**ð Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in an estimated ship date for Brendan. Please be mindful of the in-hands date and if there is any issue, notify Brendan."}]
+    elements = [{"tag": "markdown", "content": f"**\ud83d\udcca Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in an estimated ship date for Brendan. Please be mindful of the in-hands date and if there is any issue, notify Brendan."}]
     if image_key:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
-    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "ð View Record"}, "type": "default", "url": link}
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated â"}, "type": "default", "disabled": True}
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated \u2713"}, "type": "default", "disabled": True}
     else:
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "â Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, update_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"ð Status Request â {order_num}"}, "template": "orange"}, "elements": elements}
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "orange"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
     try:
