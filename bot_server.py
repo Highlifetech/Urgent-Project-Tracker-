@@ -344,7 +344,7 @@ def build_status_request_card(order_num, assigned_to, table_id, record_id, image
     if image_key:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
-    update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+    update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
     elements.append({"tag": "action", "actions": [view_btn, update_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "orange"}, "elements": elements}
 
@@ -589,11 +589,36 @@ def handle_card_callback(body):
             return {"toast": {"type": "info", "content": "Already updated"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
+        assigned_to = action_value.get("assigned_to", "")
+        table_id = action_value.get("table_id", "")
+        record_id = action_value.get("record_id", "")
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Status Updated"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as updated - {now_str}"}]}
+        link = record_link(table_id, record_id) if table_id and record_id else ""
+        respond_action_id = f"brendan_responded_{table_id}_{record_id}"
+        view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link} if link else None
+        respond_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Responded"}, "type": "primary", "value": {"action": respond_action_id, "order_num": order_num, "assigned_to": assigned_to}}
+        confirm_elements = [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as updated - {now_str}"}]
+        action_buttons = [b for b in [view_btn, respond_btn] if b]
+        if action_buttons:
+            confirm_elements.append({"tag": "action", "actions": action_buttons})
+        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Status Updated \u2014 {order_num}"}, "template": "green"}, "elements": confirm_elements}
         if FOUNDERS_CHAT:
             threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
         return {"toast": {"type": "success", "content": "Marked as updated"}}
+
+    if action_str.startswith("brendan_responded_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already responded"}}
+        _mark_action_clicked(action_str, operator_name)
+        order_num = action_value.get("order_num", "")
+        assigned_to = action_value.get("assigned_to", "")
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        notify = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u2705 Brendan Responded \u2014 {order_num}"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**Brendan** has reviewed your status update for **{order_num}** - {now_str}"}]}
+        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
+        if target:
+            threading.Thread(target=lambda: lark.send_card(notify, chat_id=target), daemon=True).start()
+        return {"toast": {"type": "success", "content": "Hannah notified"}}
+
     return {"toast": {"type": "info", "content": "Processed"}}
 
 # =========================================================================
