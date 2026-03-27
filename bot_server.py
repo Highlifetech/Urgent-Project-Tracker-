@@ -709,7 +709,16 @@ def webhook():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
+    # --- Handle comment events (v2 schema) ---
+    header = body.get("header", {})
+    event_type = header.get("event_type", "")
     event = body.get("event", {})
+    if event_type and ("comment" in event_type.lower() or event_type == "drive.notice.comment_add_v1"):
+        try:
+            _forward_comment_to_founders(event_type, event, body)
+        except Exception as e:
+            logger.error(f"Error forwarding comment event: {e}")
+        return jsonify({"code": 0})
     msg = event.get("message", {})
     if msg.get("message_type") != "text":
         return jsonify({"code": 0})
@@ -823,17 +832,15 @@ def _forward_comment_to_founders(event_type, event, full_body):
         logger.warning("No updates/founders chat configured; skipping comment forward")
         return
 
-    # Try to extract useful fields from the event payload
-    user_name = ""
-    comment_text = ""
-    file_name = ""
-    record_id = ""
-
-    # v2 schema: event may have different shapes depending on exact type
+    # Resolve user name from open_id
     user_id_info = event.get("user_id", {})
-    user_name = user_id_info.get("user_id", "") or user_id_info.get("open_id", "")
+    commenter_open_id = user_id_info.get("open_id", "") or user_id_info.get("user_id", "")
+    commenter_name = get_user_name(commenter_open_id) if commenter_open_id else "Someone"
+    if commenter_name == "Unknown":
+        commenter_name = commenter_open_id or "Someone"
 
     # Comment content
+    comment_text = ""
     comment = event.get("comment", {})
     if isinstance(comment, dict):
         reply_list = comment.get("reply_list", {}).get("replies", [])
@@ -843,44 +850,42 @@ def _forward_comment_to_founders(event_type, event, full_body):
         else:
             comment_text = comment.get("content", {}).get("text", "")
 
+    # Also check for direct content field (drive.notice.comment_add_v1 format)
+    if not comment_text:
+        content_obj = event.get("content", {})
+        if isinstance(content_obj, dict):
+            comment_text = content_obj.get("text", "")
+        elif isinstance(content_obj, str):
+            comment_text = content_obj
+
     # File / record info
     file_token = event.get("file_token", "") or event.get("file_key", "")
     file_name = event.get("file_name", "") or file_token
     record_id = event.get("record_id", "")
 
-    # Build a readable label for event type
-    type_label = event_type.replace("drive.file.", "").replace("_v1", "").replace("_", " ").title()
-
-    # Build the card
+    # Build card
     elements = []
-    if type_label:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Type:** {type_label}"}})
-    if user_name:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**User:** {user_name}"}})
+    body_text = f"**{commenter_name}** added a comment"
     if file_name:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**File / Record:** {file_name}"}})
+        body_text += f" in **{file_name}**"
     if record_id:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Record ID:** {record_id}"}})
-    if comment_text:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Comment:** {comment_text}"}})
+        body_text += f" (Record: {record_id})"
+    elements.append({"tag": "markdown", "content": body_text})
 
-    if not elements:
-        # Fallback: dump raw event for debugging
-        import json as _json
-        raw = _json.dumps(event, ensure_ascii=False, default=str)[:500]
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"```{raw}```"}})
+    if comment_text:
+        elements.append({"tag": "markdown", "content": f"> {comment_text[:500]}"})
 
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "New Comment Notification"},
+            "title": {"tag": "plain_text", "content": "\ud83d\udcac New Comment"},
             "template": "orange",
         },
         "elements": elements,
     }
 
     lark.send_card(card, chat_id=target_chat)
-    logger.info(f"Comment event forwarded to Updates channel: {event_type}")
+    logger.info(f"Comment event forwarded to Updates channel: {event_type} by {commenter_name}")
 
 @app.route("/health", methods=["GET"])
 def health():
