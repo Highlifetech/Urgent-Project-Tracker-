@@ -344,10 +344,7 @@ def build_status_request_card(order_num, assigned_to, table_id, record_id, image
     if image_key:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
-    if _is_action_clicked(action_id):
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated \u2713"}, "type": "default", "disabled": True}
-    else:
-        update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+    update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, update_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "orange"}, "elements": elements}
 
@@ -380,6 +377,12 @@ def handle_status_request_button(table_id, record_id):
         record = lark.get_record(table_id, record_id)
         fields = record.get("fields", {})
         order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+        logger.info(f"Record fields for {table_id}/{record_id}: {list(fields.keys())}")
+        if not order_num:
+            for alt_field in ["Sales Order", "Order Number", "SO#", "Order#", "order_num"]:
+                order_num = field_to_text(fields.get(alt_field, ""))
+                if order_num:
+                    break
         assigned_to = get_assigned_to(fields)
         if assigned_to == "Brendan":
             tables = lark.get_all_tables()
