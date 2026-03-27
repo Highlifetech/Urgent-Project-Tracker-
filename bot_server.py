@@ -712,17 +712,43 @@ def webhook():
     # --- Debug: log all incoming events ---
     header = body.get("header", {})
     event_type = header.get("event_type", "")
-    logger.info(f"Webhook received: event_type={event_type}, keys={list(body.keys())}")
-    # --- Handle comment events (v2 schema) ---
     event = body.get("event", {})
-    if event_type and ("comment" in event_type.lower() or event_type == "drive.notice.comment_add_v1"):
-        try:
-            _forward_comment_to_founders(event_type, event, body)
-        except Exception as e:
-            logger.error(f"Error forwarding comment event: {e}")
-        return jsonify({"code": 0})
     msg = event.get("message", {})
-    if msg.get("message_type") != "text":
+    chat_id = msg.get("chat_id", "")
+    msg_type = msg.get("message_type", "")
+    sender = event.get("sender", {})
+    sender_type = sender.get("sender_type", "")
+    logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, chat_id={chat_id}, sender_type={sender_type}")
+    # --- Forward comment notifications from 2026 PRODUCTION channel ---
+    PRODUCTION_2026_CHAT = os.environ.get("LARK_CHAT_ID_PRODUCTION_2026", "")
+    if chat_id and PRODUCTION_2026_CHAT and chat_id == PRODUCTION_2026_CHAT and sender_type == "app":
+        logger.info(f"Bot message in 2026 PRODUCTION: type={msg_type}")
+        target_chat = UPDATES_CHAT or FOUNDERS_CHAT
+        if target_chat:
+            try:
+                # Use Lark API to forward the message
+                message_id = msg.get("message_id", "")
+                if message_id:
+                    lark.forward_message(message_id, target_chat)
+                    logger.info(f"Forwarded message {message_id} to Updates channel")
+            except Exception as fwd_err:
+                logger.warning(f"Forward failed, trying card rebuild: {fwd_err}")
+                # Fallback: rebuild as a simple card
+                try:
+                    content_str = msg.get("content", "{}")
+                    content = json.loads(content_str) if isinstance(content_str, str) else content_str
+                    text_content = content.get("text", str(content)[:500])
+                    card = {
+                        "config": {"wide_screen_mode": True},
+                        "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcac Comment Notification"}, "template": "orange"},
+                        "elements": [{"tag": "markdown", "content": text_content}]
+                    }
+                    lark.send_card(card, chat_id=target_chat)
+                    logger.info(f"Sent comment card to Updates channel")
+                except Exception as e2:
+                    logger.error(f"Fallback card also failed: {e2}")
+        return jsonify({"code": 0})
+    if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
