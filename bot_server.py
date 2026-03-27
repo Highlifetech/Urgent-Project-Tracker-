@@ -617,7 +617,7 @@ def handle_card_callback(body):
         target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
         if target:
             threading.Thread(target=lambda: lark.send_card(notify, chat_id=target), daemon=True).start()
-        return {"toast": {"type": "success", f"{assigned_to} notified"}}
+        return {"toast": {"type": "success", "content": f"{assigned_to} notified"}}
 
     return {"toast": {"type": "info", "content": "Processed"}}
 
