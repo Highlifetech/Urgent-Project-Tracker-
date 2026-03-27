@@ -34,6 +34,7 @@ from config import (
 )
 
 FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
+UPDATES_CHAT = os.environ.get("LARK_CHAT_ID_UPDATES", "")
 DIGEST_CHAT = os.environ.get("LARK_CHAT_ID_DIGEST", "")
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
@@ -816,9 +817,10 @@ def event_subscription():
 
 
 def _forward_comment_to_founders(event_type, event, full_body):
-    """Extract comment details and send a card to the Founders channel."""
-    if not FOUNDERS_CHAT:
-        logger.warning("FOUNDERS_CHAT not configured; skipping comment forward")
+    """Extract comment details and send a card to the Updates/Approvals channel."""
+    target_chat = UPDATES_CHAT or FOUNDERS_CHAT
+    if not target_chat:
+        logger.warning("No updates/founders chat configured; skipping comment forward")
         return
 
     # Try to extract useful fields from the event payload
@@ -877,8 +879,8 @@ def _forward_comment_to_founders(event_type, event, full_body):
         "elements": elements,
     }
 
-    lark.send_card(card, chat_id=FOUNDERS_CHAT)
-    logger.info(f"Comment event forwarded to Founders channel: {event_type}")
+    lark.send_card(card, chat_id=target_chat)
+    logger.info(f"Comment event forwarded to Updates channel: {event_type}")
 
 @app.route("/health", methods=["GET"])
 def health():
