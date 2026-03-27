@@ -709,9 +709,11 @@ def webhook():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
-    # --- Handle comment events (v2 schema) ---
+    # --- Debug: log all incoming events ---
     header = body.get("header", {})
     event_type = header.get("event_type", "")
+    logger.info(f"Webhook received: event_type={event_type}, keys={list(body.keys())}")
+    # --- Handle comment events (v2 schema) ---
     event = body.get("event", {})
     if event_type and ("comment" in event_type.lower() or event_type == "drive.notice.comment_add_v1"):
         try:
