@@ -788,9 +788,97 @@ def morning_digest():
 @app.route("/event", methods=["POST"])
 def event_subscription():
     body = request.get_json(silent=True) or {}
+    # Handle URL verification challenge
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
+
+    # Handle event callback (v2 schema)
+    header = body.get("header", {})
+    event = body.get("event", {})
+    event_type = header.get("event_type", "")
+
+    logger.info(f"Event received: type={event_type}")
+
+    # --- Comment events from Base / Docs ---
+    comment_event_types = [
+        "drive.file.comment_created_v1",
+        "drive.file.comment_replied_v1",
+        "drive.file.comment_mentioned_v1",
+    ]
+
+    if event_type in comment_event_types or "comment" in event_type.lower():
+        try:
+            _forward_comment_to_founders(event_type, event, body)
+        except Exception as e:
+            logger.error(f"Error forwarding comment event: {e}")
+
     return jsonify({"code": 0})
+
+
+def _forward_comment_to_founders(event_type, event, full_body):
+    """Extract comment details and send a card to the Founders channel."""
+    if not FOUNDERS_CHAT:
+        logger.warning("FOUNDERS_CHAT not configured; skipping comment forward")
+        return
+
+    # Try to extract useful fields from the event payload
+    user_name = ""
+    comment_text = ""
+    file_name = ""
+    record_id = ""
+
+    # v2 schema: event may have different shapes depending on exact type
+    user_id_info = event.get("user_id", {})
+    user_name = user_id_info.get("user_id", "") or user_id_info.get("open_id", "")
+
+    # Comment content
+    comment = event.get("comment", {})
+    if isinstance(comment, dict):
+        reply_list = comment.get("reply_list", {}).get("replies", [])
+        if reply_list:
+            last_reply = reply_list[-1]
+            comment_text = last_reply.get("content", {}).get("text", "")
+        else:
+            comment_text = comment.get("content", {}).get("text", "")
+
+    # File / record info
+    file_token = event.get("file_token", "") or event.get("file_key", "")
+    file_name = event.get("file_name", "") or file_token
+    record_id = event.get("record_id", "")
+
+    # Build a readable label for event type
+    type_label = event_type.replace("drive.file.", "").replace("_v1", "").replace("_", " ").title()
+
+    # Build the card
+    elements = []
+    if type_label:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Type:** {type_label}"}})
+    if user_name:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**User:** {user_name}"}})
+    if file_name:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**File / Record:** {file_name}"}})
+    if record_id:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Record ID:** {record_id}"}})
+    if comment_text:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**Comment:** {comment_text}"}})
+
+    if not elements:
+        # Fallback: dump raw event for debugging
+        import json as _json
+        raw = _json.dumps(event, ensure_ascii=False, default=str)[:500]
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"```{raw}```"}})
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "New Comment Notification"},
+            "template": "orange",
+        },
+        "elements": elements,
+    }
+
+    lark.send_card(card, chat_id=FOUNDERS_CHAT)
+    logger.info(f"Comment event forwarded to Founders channel: {event_type}")
 
 @app.route("/health", methods=["GET"])
 def health():
