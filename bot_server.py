@@ -749,7 +749,8 @@ def webhook():
             try:
                 # Fetch full message content to determine notification type
                 msg_data = lark.get_message(message_id) if message_id else {}
-                msg_body = msg_data.get("items", [{}])[0] if msg_data.get("items") else {}
+                msg_items = msg_data.get("items", [])
+                msg_body = msg_items[0] if msg_items else {}
                 content_str = msg_body.get("body", {}).get("content", "") or msg.get("content", "{}")
                 if isinstance(content_str, str):
                     try:
@@ -759,50 +760,121 @@ def webhook():
                 else:
                     content_parsed = content_str
 
-                # Detect notification type from card/text content
                 full_text = json.dumps(content_parsed).lower()
 
-                # SKIP these notification types (Record added, field changed, etc.)
-                skip_keywords = [
-                    "record added", "added a new record",
-                    "record deleted", "deleted a record",
-                    "field changed", "field updated",
-                    "record updated", "updated a record",
-                    "modified a record",
+                # ONLY forward comment notifications (whitelist approach)
+                comment_keywords = [
+                    "new comment",
+                    "comment mentioned",
+                    "added a comment in record",
+                    "mentioned you in the comment in record",
+                    "replied to a comment",
                 ]
-                is_skip = any(kw in full_text for kw in skip_keywords)
+                is_comment = any(kw in full_text for kw in comment_keywords)
 
-                if is_skip:
+                if not is_comment:
                     logger.info(f"Skipping non-comment bot message from 2026 PRODUCTION")
                     return jsonify({"code": 0})
 
-                # This appears to be a comment notification - forward it
-                logger.info(f"Forwarding comment notification from 2026 PRODUCTION")
+                # --- Parse comment details from the card content ---
+                full_text_original = json.dumps(content_parsed)
 
-                # Try to forward the original message first
-                try:
-                    lark.forward_message(message_id, target_chat)
-                    logger.info(f"Forwarded message {message_id} to Urgent Approvals")
-                except Exception as fwd_err:
-                    logger.warning(f"Forward failed, building card: {fwd_err}")
-                    # Build a card with the message content + action buttons
-                    text_content = content_parsed.get("text", str(content_parsed)[:500])
-                    action_id = f"comment_resolved_prod2026_{int(time.time())}"
-                    elements = [{"tag": "markdown", "content": text_content[:800]}]
-                    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"}
-                    resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id, "commenter": "Team"}}
-                    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-                    card = {
-                        "config": {"wide_screen_mode": True},
-                        "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcac Comment Notification"}, "template": "orange"},
-                        "elements": elements,
-                    }
-                    lark.send_card(card, chat_id=target_chat)
-                    logger.info(f"Sent comment card to Urgent Approvals")
+                # Extract commenter name (e.g. "@Hannah Lu" or "@Lucy")
+                commenter_match = re.search(r'@([A-Za-z][A-Za-z ]+?)(?:\s+(?:added|mentioned))', full_text_original)
+                commenter_name = commenter_match.group(1).strip() if commenter_match else ""
+                if not commenter_name:
+                    # Try simpler pattern
+                    commenter_match2 = re.search(r'@([A-Za-z][A-Za-z ]+?)\s', full_text_original)
+                    commenter_name = commenter_match2.group(1).strip() if commenter_match2 else "Someone"
+
+                # Extract record identifier (e.g. "#HLT-SO6265" or "#BROOKLYNCHARM-VOGUE")
+                record_match = re.search(r'#([A-Za-z0-9_-]+)', full_text_original)
+                record_ref = record_match.group(1) if record_match else ""
+
+                # Extract comment preview text (after the record ref and colon)
+                comment_preview = ""
+                preview_match = re.search(r'#[A-Za-z0-9_-]+[:\s]*([^"]{3,}?)(?:\.{3}|")', full_text_original)
+                if preview_match:
+                    comment_preview = preview_match.group(1).strip()
+
+                # Determine if this is "New comment" or "Comment mentioned"
+                is_mention = "comment mentioned" in full_text or "mentioned you" in full_text
+                card_title = f"\ud83d\udcac {'Comment Mention' if is_mention else 'New Comment'} \u2014 {commenter_name}"
+
+                # Build record link - try to find the record in our Base
+                link = ""
+                if record_ref:
+                    # Search for the record by order number to get table_id + record_id
+                    try:
+                        projects = fetch_all_projects()
+                        for p in projects:
+                            order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
+                            if order_num and record_ref.upper() in order_num.upper():
+                                tid = p.get("__table_id__", "")
+                                rid = p.get("__record_id__", "")
+                                if tid and rid:
+                                    link = record_link(tid, rid)
+                                break
+                    except Exception:
+                        pass
+                    if not link:
+                        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"
+
+                # Build the card for Urgent Approvals
+                action_id = f"comment_resolved_{record_ref or 'unknown'}_{int(time.time())}"
+
+                body_md = f"**{commenter_name}** "
+                if is_mention:
+                    body_md += "mentioned you in a comment"
+                else:
+                    body_md += "added a comment"
+                if record_ref:
+                    body_md += f" on **#{record_ref}**"
+                if comment_preview:
+                    body_md += f"\n\n> {comment_preview}"
+
+                elements = [{"tag": "markdown", "content": body_md}]
+
+                buttons = []
+                if link:
+                    buttons.append({
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"},
+                        "type": "default",
+                        "url": link,
+                    })
+                if _is_action_clicked(action_id):
+                    buttons.append({
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "Resolved \u2713"},
+                        "type": "default",
+                        "disabled": True,
+                    })
+                else:
+                    buttons.append({
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"},
+                        "type": "primary",
+                        "value": {"action": action_id, "commenter": commenter_name, "record": record_ref},
+                    })
+                if buttons:
+                    elements.append({"tag": "action", "actions": buttons})
+
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "title": {"tag": "plain_text", "content": card_title},
+                        "template": "orange",
+                    },
+                    "elements": elements,
+                }
+                lark.send_card(card, chat_id=target_chat)
+                logger.info(f"Comment card sent to Urgent Approvals: {commenter_name} on #{record_ref}")
+
             except Exception as e:
                 logger.error(f"Error processing 2026 PRODUCTION message: {e}")
         return jsonify({"code": 0})
-        if msg_type != "text":
+    if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
