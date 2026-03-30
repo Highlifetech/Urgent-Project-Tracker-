@@ -36,9 +36,11 @@ from config import (
 FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
 UPDATES_CHAT = os.environ.get("LARK_CHAT_ID_UPDATES", "")
 DIGEST_CHAT = os.environ.get("LARK_CHAT_ID_DIGEST", "")
+URGENT_APPROVALS_CHAT = os.environ.get("LARK_CHAT_ID_URGENT_APPROVALS", "")
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "")
+CARLO_OPEN_ID = os.environ.get("CARLO_OPEN_ID", "")
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 lark = LarkClient()
@@ -129,6 +131,8 @@ def get_user_name(open_id):
         return "Lucy"
     if open_id == BRENDAN_OPEN_ID:
         return "Brendan"
+    if open_id == CARLO_OPEN_ID:
+        return "Carlo"
     return "Unknown"
 
 # =========================================================================
@@ -607,6 +611,22 @@ def handle_card_callback(body):
             threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
         return {"toast": {"type": "success", "content": "Marked as updated"}}
 
+    if action_str.startswith("comment_resolved_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already resolved"}}
+        _mark_action_clicked(action_str, operator_name)
+        commenter = action_value.get("commenter", "")
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        confirm = {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": "\u2705 Comment Resolved"}, "template": "green"},
+            "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved comment from **{commenter}** - {now_str}"}],
+        }
+        target = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
+        if target:
+            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=target), daemon=True).start()
+        return {"toast": {"type": "success", "content": "Marked as resolved"}}
+
     if action_str.startswith("brendan_responded_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already responded"}}
@@ -723,28 +743,30 @@ def webhook():
     PRODUCTION_2026_CHAT = os.environ.get("LARK_CHAT_ID_PRODUCTION_2026", "")
     if chat_id and PRODUCTION_2026_CHAT and chat_id == PRODUCTION_2026_CHAT and sender_type == "app":
         logger.info(f"Bot message in 2026 PRODUCTION: type={msg_type}")
-        target_chat = UPDATES_CHAT or FOUNDERS_CHAT
+        target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
         if target_chat:
             try:
-                # Use Lark API to forward the message
                 message_id = msg.get("message_id", "")
                 if message_id:
                     lark.forward_message(message_id, target_chat)
-                    logger.info(f"Forwarded message {message_id} to Updates channel")
+                    logger.info(f"Forwarded message {message_id} to Urgent Approvals")
             except Exception as fwd_err:
                 logger.warning(f"Forward failed, trying card rebuild: {fwd_err}")
-                # Fallback: rebuild as a simple card
                 try:
                     content_str = msg.get("content", "{}")
                     content = json.loads(content_str) if isinstance(content_str, str) else content_str
                     text_content = content.get("text", str(content)[:500])
+                    action_id = f"comment_resolved_prod2026_{int(time.time())}"
+                    elements = [{"tag": "markdown", "content": text_content}]
+                    actions = [{"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id}}]
+                    elements.append({"tag": "action", "actions": actions})
                     card = {
                         "config": {"wide_screen_mode": True},
                         "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcac Comment Notification"}, "template": "orange"},
-                        "elements": [{"tag": "markdown", "content": text_content}]
+                        "elements": elements,
                     }
                     lark.send_card(card, chat_id=target_chat)
-                    logger.info(f"Sent comment card to Updates channel")
+                    logger.info(f"Sent comment card to Urgent Approvals")
                 except Exception as e2:
                     logger.error(f"Fallback card also failed: {e2}")
         return jsonify({"code": 0})
@@ -854,10 +876,16 @@ def event_subscription():
 
 
 def _forward_comment_to_founders(event_type, event, full_body):
-    """Extract comment details and send a card to the Updates/Approvals channel."""
-    target_chat = UPDATES_CHAT or FOUNDERS_CHAT
+    """Extract comment details and send a card to the Urgent Approvals channel.
+
+    Card includes:
+      - Who commented and the comment text
+      - View Record button (links to the Lark Base record)
+      - Mark as Resolved button (updates the card when clicked)
+    """
+    target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
     if not target_chat:
-        logger.warning("No updates/founders chat configured; skipping comment forward")
+        logger.warning("No urgent approvals/founders chat configured; skipping comment forward")
         return
 
     # Resolve user name from open_id
@@ -890,6 +918,22 @@ def _forward_comment_to_founders(event_type, event, full_body):
     file_token = event.get("file_token", "") or event.get("file_key", "")
     file_name = event.get("file_name", "") or file_token
     record_id = event.get("record_id", "")
+    table_id = event.get("table_id", "")
+
+    # Try to find table_id from the file_token context if not directly available
+    if not table_id:
+        context = event.get("context", {})
+        table_id = context.get("table_id", "")
+
+    # Build record link if we have enough info
+    link = ""
+    if table_id and record_id:
+        link = record_link(table_id, record_id)
+    elif record_id:
+        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?record={record_id}"
+
+    # Unique action ID for the resolve button
+    action_id = f"comment_resolved_{record_id or file_token or ''}_{int(time.time())}"
 
     # Build card
     elements = []
@@ -903,17 +947,45 @@ def _forward_comment_to_founders(event_type, event, full_body):
     if comment_text:
         elements.append({"tag": "markdown", "content": f"> {comment_text[:500]}"})
 
+    # Action buttons: View Record + Mark as Resolved
+    buttons = []
+    if link:
+        buttons.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"},
+            "type": "default",
+            "url": link,
+        })
+
+    if _is_action_clicked(action_id):
+        buttons.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "Resolved \u2713"},
+            "type": "default",
+            "disabled": True,
+        })
+    else:
+        buttons.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"},
+            "type": "primary",
+            "value": {"action": action_id, "commenter": commenter_name},
+        })
+
+    if buttons:
+        elements.append({"tag": "action", "actions": buttons})
+
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "\ud83d\udcac New Comment"},
+            "title": {"tag": "plain_text", "content": f"\ud83d\udcac New Comment \u2014 {commenter_name}"},
             "template": "orange",
         },
         "elements": elements,
     }
 
     lark.send_card(card, chat_id=target_chat)
-    logger.info(f"Comment event forwarded to Updates channel: {event_type} by {commenter_name}")
+    logger.info(f"Comment event forwarded to Urgent Approvals: {event_type} by {commenter_name}")
 
 @app.route("/health", methods=["GET"])
 def health():
