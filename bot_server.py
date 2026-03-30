@@ -739,7 +739,70 @@ def webhook():
     sender = event.get("sender", {})
     sender_type = sender.get("sender_type", "")
     logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, chat_id={chat_id}, sender_type={sender_type}")
-    if msg_type != "text":
+    # --- Forward ONLY comment notifications from 2026 PRODUCTION channel ---
+    PRODUCTION_2026_CHAT = os.environ.get("LARK_CHAT_ID_PRODUCTION_2026", "")
+    if chat_id and PRODUCTION_2026_CHAT and chat_id == PRODUCTION_2026_CHAT and sender_type == "app":
+        logger.info(f"Bot message in 2026 PRODUCTION: type={msg_type}")
+        target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
+        if target_chat:
+            message_id = msg.get("message_id", "")
+            try:
+                # Fetch full message content to determine notification type
+                msg_data = lark.get_message(message_id) if message_id else {}
+                msg_body = msg_data.get("items", [{}])[0] if msg_data.get("items") else {}
+                content_str = msg_body.get("body", {}).get("content", "") or msg.get("content", "{}")
+                if isinstance(content_str, str):
+                    try:
+                        content_parsed = json.loads(content_str)
+                    except Exception:
+                        content_parsed = {"text": content_str}
+                else:
+                    content_parsed = content_str
+
+                # Detect notification type from card/text content
+                full_text = json.dumps(content_parsed).lower()
+
+                # SKIP these notification types (Record added, field changed, etc.)
+                skip_keywords = [
+                    "record added", "added a new record",
+                    "record deleted", "deleted a record",
+                    "field changed", "field updated",
+                    "record updated", "updated a record",
+                    "modified a record",
+                ]
+                is_skip = any(kw in full_text for kw in skip_keywords)
+
+                if is_skip:
+                    logger.info(f"Skipping non-comment bot message from 2026 PRODUCTION")
+                    return jsonify({"code": 0})
+
+                # This appears to be a comment notification - forward it
+                logger.info(f"Forwarding comment notification from 2026 PRODUCTION")
+
+                # Try to forward the original message first
+                try:
+                    lark.forward_message(message_id, target_chat)
+                    logger.info(f"Forwarded message {message_id} to Urgent Approvals")
+                except Exception as fwd_err:
+                    logger.warning(f"Forward failed, building card: {fwd_err}")
+                    # Build a card with the message content + action buttons
+                    text_content = content_parsed.get("text", str(content_parsed)[:500])
+                    action_id = f"comment_resolved_prod2026_{int(time.time())}"
+                    elements = [{"tag": "markdown", "content": text_content[:800]}]
+                    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"}
+                    resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id, "commenter": "Team"}}
+                    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
+                    card = {
+                        "config": {"wide_screen_mode": True},
+                        "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcac Comment Notification"}, "template": "orange"},
+                        "elements": elements,
+                    }
+                    lark.send_card(card, chat_id=target_chat)
+                    logger.info(f"Sent comment card to Urgent Approvals")
+            except Exception as e:
+                logger.error(f"Error processing 2026 PRODUCTION message: {e}")
+        return jsonify({"code": 0})
+        if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
