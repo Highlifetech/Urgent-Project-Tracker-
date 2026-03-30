@@ -1009,21 +1009,21 @@ def _forward_comment_to_founders(event_type, event, full_body):
     if link:
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "📎 View Record"},
+            "text": {"tag": "plain_text", "content": "ð View Record"},
             "type": "default",
             "url": link,
         })
     if _is_action_clicked(action_id):
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "Resolved ✓"},
+            "text": {"tag": "plain_text", "content": "Resolved â"},
             "type": "default",
             "disabled": True,
         })
     else:
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "✅ Mark as Resolved"},
+            "text": {"tag": "plain_text", "content": "â Mark as Resolved"},
             "type": "primary",
             "value": {"action": action_id, "commenter": commenter_name, "record": record_id},
         })
@@ -1033,7 +1033,7 @@ def _forward_comment_to_founders(event_type, event, full_body):
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": f"💬 New Comment — {commenter_name}"},
+            "title": {"tag": "plain_text", "content": f"ð¬ New Comment â {commenter_name}"},
             "template": "orange",
         },
         "elements": elements,
@@ -1052,44 +1052,44 @@ def debug_events():
 
 @app.route("/test-comments/<table_id>/<record_id>", methods=["GET"])
 def test_comments(table_id, record_id):
-        """Try undocumented Bitable comment APIs to see which one works."""
-        results = {}
-        token = lark.get_tenant_token()
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        base_url = "https://open.larksuite.com/open-apis"
-        app_token = LARK_BASE_APP_TOKEN
+    """Try undocumented Bitable comment APIs to see which one works."""
+    results = {}
+    token = lark.get_tenant_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base_url = "https://open.larksuite.com/open-apis"
+    app_token = LARK_BASE_APP_TOKEN
 
     # Attempt 1: bitable/v1/apps/{app}/tables/{table}/records/{record}/comments
     url1 = f"{base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}/comments"
     try:
-                r1 = requests.get(url1, headers=headers, timeout=10)
-                results["attempt1_bitable_record_comments"] = {"status": r1.status_code, "body": r1.json() if r1.status_code < 500 else r1.text[:500]}
-except Exception as e:
-            results["attempt1_bitable_record_comments"] = {"error": str(e)}
+        r1 = requests.get(url1, headers=headers, timeout=10)
+        results["attempt1_bitable_record_comments"] = {"status": r1.status_code, "body": r1.json() if r1.status_code < 500 else r1.text[:500]}
+    except Exception as e:
+        results["attempt1_bitable_record_comments"] = {"error": str(e)}
 
     # Attempt 2: bitable/v1/apps/{app}/tables/{table}/records/{record}/comments/list
     url2 = f"{base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}/comments/list"
     try:
-                r2 = requests.get(url2, headers=headers, timeout=10)
-                results["attempt2_comments_list"] = {"status": r2.status_code, "body": r2.json() if r2.status_code < 500 else r2.text[:500]}
-except Exception as e:
-            results["attempt2_comments_list"] = {"error": str(e)}
+        r2 = requests.get(url2, headers=headers, timeout=10)
+        results["attempt2_comments_list"] = {"status": r2.status_code, "body": r2.json() if r2.status_code < 500 else r2.text[:500]}
+    except Exception as e:
+        results["attempt2_comments_list"] = {"error": str(e)}
 
     # Attempt 3: drive/v1/files/{app_token}/comments?file_type=bitable
     url3 = f"{base_url}/drive/v1/files/{app_token}/comments?file_type=bitable"
     try:
-                r3 = requests.get(url3, headers=headers, timeout=10)
-                results["attempt3_drive_bitable"] = {"status": r3.status_code, "body": r3.json() if r3.status_code < 500 else r3.text[:500]}
-except Exception as e:
-            results["attempt3_drive_bitable"] = {"error": str(e)}
+        r3 = requests.get(url3, headers=headers, timeout=10)
+        results["attempt3_drive_bitable"] = {"status": r3.status_code, "body": r3.json() if r3.status_code < 500 else r3.text[:500]}
+    except Exception as e:
+        results["attempt3_drive_bitable"] = {"error": str(e)}
 
     # Attempt 4: drive/v1/files/{app_token}/comments (no file_type)
     url4 = f"{base_url}/drive/v1/files/{app_token}/comments"
     try:
-                r4 = requests.get(url4, headers=headers, timeout=10)
-                results["attempt4_drive_no_type"] = {"status": r4.status_code, "body": r4.json() if r4.status_code < 500 else r4.text[:500]}
-except Exception as e:
-            results["attempt4_drive_no_type"] = {"error": str(e)}
+        r4 = requests.get(url4, headers=headers, timeout=10)
+        results["attempt4_drive_no_type"] = {"status": r4.status_code, "body": r4.json() if r4.status_code < 500 else r4.text[:500]}
+    except Exception as e:
+        results["attempt4_drive_no_type"] = {"error": str(e)}
 
     return jsonify(results)
 
