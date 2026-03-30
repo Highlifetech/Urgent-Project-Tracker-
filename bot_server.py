@@ -739,141 +739,29 @@ def webhook():
     sender = event.get("sender", {})
     sender_type = sender.get("sender_type", "")
     logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, chat_id={chat_id}, sender_type={sender_type}")
-    # --- Forward ONLY comment notifications from 2026 PRODUCTION channel ---
-    PRODUCTION_2026_CHAT = os.environ.get("LARK_CHAT_ID_PRODUCTION_2026", "")
-    if chat_id and PRODUCTION_2026_CHAT and chat_id == PRODUCTION_2026_CHAT and sender_type == "app":
-        logger.info(f"Bot message in 2026 PRODUCTION: type={msg_type}")
-        target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
-        if target_chat:
-            message_id = msg.get("message_id", "")
-            try:
-                # Fetch full message content to determine notification type
-                msg_data = lark.get_message(message_id) if message_id else {}
-                msg_items = msg_data.get("items", [])
-                msg_body = msg_items[0] if msg_items else {}
-                content_str = msg_body.get("body", {}).get("content", "") or msg.get("content", "{}")
-                if isinstance(content_str, str):
-                    try:
-                        content_parsed = json.loads(content_str)
-                    except Exception:
-                        content_parsed = {"text": content_str}
-                else:
-                    content_parsed = content_str
 
-                full_text = json.dumps(content_parsed).lower()
+    # Store event for debugging
+    _recent_events.append({"time": datetime.now(timezone.utc).isoformat(), "event_type": event_type, "msg_type": msg_type, "chat_id": chat_id[:20] if chat_id else "", "sender_type": sender_type, "keys": list(event.keys()) if isinstance(event, dict) else []})
+    if len(_recent_events) > MAX_RECENT_EVENTS:
+        _recent_events.pop(0)
 
-                # ONLY forward comment notifications (whitelist approach)
-                comment_keywords = [
-                    "new comment",
-                    "comment mentioned",
-                    "added a comment in record",
-                    "mentioned you in the comment in record",
-                    "replied to a comment",
-                ]
-                is_comment = any(kw in full_text for kw in comment_keywords)
-
-                if not is_comment:
-                    logger.info(f"Skipping non-comment bot message from 2026 PRODUCTION")
-                    return jsonify({"code": 0})
-
-                # --- Parse comment details from the card content ---
-                full_text_original = json.dumps(content_parsed)
-
-                # Extract commenter name (e.g. "@Hannah Lu" or "@Lucy")
-                commenter_match = re.search(r'@([A-Za-z][A-Za-z ]+?)(?:\s+(?:added|mentioned))', full_text_original)
-                commenter_name = commenter_match.group(1).strip() if commenter_match else ""
-                if not commenter_name:
-                    # Try simpler pattern
-                    commenter_match2 = re.search(r'@([A-Za-z][A-Za-z ]+?)\s', full_text_original)
-                    commenter_name = commenter_match2.group(1).strip() if commenter_match2 else "Someone"
-
-                # Extract record identifier (e.g. "#HLT-SO6265" or "#BROOKLYNCHARM-VOGUE")
-                record_match = re.search(r'#([A-Za-z0-9_-]+)', full_text_original)
-                record_ref = record_match.group(1) if record_match else ""
-
-                # Extract comment preview text (after the record ref and colon)
-                comment_preview = ""
-                preview_match = re.search(r'#[A-Za-z0-9_-]+[:\s]*([^"]{3,}?)(?:\.{3}|")', full_text_original)
-                if preview_match:
-                    comment_preview = preview_match.group(1).strip()
-
-                # Determine if this is "New comment" or "Comment mentioned"
-                is_mention = "comment mentioned" in full_text or "mentioned you" in full_text
-                card_title = f"\ud83d\udcac {'Comment Mention' if is_mention else 'New Comment'} \u2014 {commenter_name}"
-
-                # Build record link - try to find the record in our Base
-                link = ""
-                if record_ref:
-                    # Search for the record by order number to get table_id + record_id
-                    try:
-                        projects = fetch_all_projects()
-                        for p in projects:
-                            order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
-                            if order_num and record_ref.upper() in order_num.upper():
-                                tid = p.get("__table_id__", "")
-                                rid = p.get("__record_id__", "")
-                                if tid and rid:
-                                    link = record_link(tid, rid)
-                                break
-                    except Exception:
-                        pass
-                    if not link:
-                        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"
-
-                # Build the card for Urgent Approvals
-                action_id = f"comment_resolved_{record_ref or 'unknown'}_{int(time.time())}"
-
-                body_md = f"**{commenter_name}** "
-                if is_mention:
-                    body_md += "mentioned you in a comment"
-                else:
-                    body_md += "added a comment"
-                if record_ref:
-                    body_md += f" on **#{record_ref}**"
-                if comment_preview:
-                    body_md += f"\n\n> {comment_preview}"
-
-                elements = [{"tag": "markdown", "content": body_md}]
-
-                buttons = []
-                if link:
-                    buttons.append({
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"},
-                        "type": "default",
-                        "url": link,
-                    })
-                if _is_action_clicked(action_id):
-                    buttons.append({
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "Resolved \u2713"},
-                        "type": "default",
-                        "disabled": True,
-                    })
-                else:
-                    buttons.append({
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"},
-                        "type": "primary",
-                        "value": {"action": action_id, "commenter": commenter_name, "record": record_ref},
-                    })
-                if buttons:
-                    elements.append({"tag": "action", "actions": buttons})
-
-                card = {
-                    "config": {"wide_screen_mode": True},
-                    "header": {
-                        "title": {"tag": "plain_text", "content": card_title},
-                        "template": "orange",
-                    },
-                    "elements": elements,
-                }
-                lark.send_card(card, chat_id=target_chat)
-                logger.info(f"Comment card sent to Urgent Approvals: {commenter_name} on #{record_ref}")
-
-            except Exception as e:
-                logger.error(f"Error processing 2026 PRODUCTION message: {e}")
+    # --- Handle comment events (drive.notice.comment_add_v1) ---
+    # These events fire when comments are added to docs/base records the bot has access to
+    COMMENT_EVENT_TYPES = [
+        "drive.notice.comment_add_v1",
+        "drive.file.comment_created_v1",
+        "drive.file.comment_replied_v1",
+        "drive.file.comment_mentioned_v1",
+    ]
+    if event_type in COMMENT_EVENT_TYPES or ("comment" in event_type.lower() and "approval" not in event_type.lower() and "moments" not in event_type.lower() and "task" not in event_type.lower()):
+        logger.info(f"Comment event received: type={event_type}")
+        logger.info(f"Comment event payload: {json.dumps(body, default=str)[:2000]}")
+        try:
+            _forward_comment_to_founders(event_type, event, body)
+        except Exception as e:
+            logger.error(f"Error forwarding comment event: {e}")
         return jsonify({"code": 0})
+
     if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
@@ -961,56 +849,96 @@ def event_subscription():
     event = body.get("event", {})
     event_type = header.get("event_type", "")
 
-    logger.info(f"Event received: type={event_type}")
+    logger.info(f"Event endpoint received: type={event_type}")
+    logger.info(f"Event endpoint payload: {json.dumps(body, default=str)[:2000]}")
 
-    # --- Comment events from Base / Docs ---
-    comment_event_types = [
+    # Route comment events to the handler
+    COMMENT_EVENT_TYPES = [
+        "drive.notice.comment_add_v1",
         "drive.file.comment_created_v1",
         "drive.file.comment_replied_v1",
         "drive.file.comment_mentioned_v1",
     ]
-
-    if event_type in comment_event_types or "comment" in event_type.lower():
+    if event_type in COMMENT_EVENT_TYPES or ("comment" in event_type.lower() and "approval" not in event_type.lower() and "moments" not in event_type.lower() and "task" not in event_type.lower()):
         try:
             _forward_comment_to_founders(event_type, event, body)
         except Exception as e:
             logger.error(f"Error forwarding comment event: {e}")
+        return jsonify({"code": 0})
 
     return jsonify({"code": 0})
 
 
 def _forward_comment_to_founders(event_type, event, full_body):
-    """Extract comment details and send a card to the Urgent Approvals channel.
-
+    """Extract comment details from drive.notice.comment_add_v1 or similar events
+    and send a card to the Urgent Approvals channel.
+    
     Card includes:
-      - Who commented and the comment text
-      - View Record button (links to the Lark Base record)
-      - Mark as Resolved button (updates the card when clicked)
+    - Who commented and the comment text
+    - View Record button (links to the Lark Base record)
+    - Mark as Resolved button (updates the card when clicked)
     """
     target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
     if not target_chat:
         logger.warning("No urgent approvals/founders chat configured; skipping comment forward")
         return
 
-    # Resolve user name from open_id
-    user_id_info = event.get("user_id", {})
-    commenter_open_id = user_id_info.get("open_id", "") or user_id_info.get("user_id", "")
-    commenter_name = get_user_name(commenter_open_id) if commenter_open_id else "Someone"
-    if commenter_name == "Unknown":
-        commenter_name = commenter_open_id or "Someone"
+    # Log full event for debugging
+    logger.info(f"Processing comment event: {event_type}")
+    logger.info(f"Event keys: {list(event.keys()) if isinstance(event, dict) else type(event)}")
 
-    # Comment content
+    # --- Extract commenter info ---
+    commenter_name = "Someone"
+    commenter_open_id = ""
+    
+    # Try various payload formats
+    # Format 1: drive.notice.comment_add_v1
+    user_id_info = event.get("user_id", {})
+    if isinstance(user_id_info, dict):
+        commenter_open_id = user_id_info.get("open_id", "") or user_id_info.get("user_id", "")
+    
+    # Format 2: direct user fields
+    if not commenter_open_id:
+        commenter_open_id = event.get("operator_id", {}).get("open_id", "") if isinstance(event.get("operator_id"), dict) else ""
+    if not commenter_open_id:
+        commenter_open_id = event.get("user_id", "") if isinstance(event.get("user_id"), str) else ""
+    
+    if commenter_open_id:
+        commenter_name = get_user_name(commenter_open_id)
+        if commenter_name == "Unknown":
+            # Try to get name from Lark API
+            try:
+                if hasattr(lark, 'get_user_info'):
+                    user_info = lark.get_user_info(commenter_open_id)
+                    commenter_name = user_info.get("name", commenter_open_id)
+                else:
+                    commenter_name = commenter_open_id
+            except Exception:
+                commenter_name = commenter_open_id
+
+    # --- Extract comment content ---
     comment_text = ""
+    
+    # Try comment.reply_list.replies (standard Drive comment format)
     comment = event.get("comment", {})
     if isinstance(comment, dict):
         reply_list = comment.get("reply_list", {}).get("replies", [])
         if reply_list:
             last_reply = reply_list[-1]
-            comment_text = last_reply.get("content", {}).get("text", "")
-        else:
-            comment_text = comment.get("content", {}).get("text", "")
+            # Reply content can be nested
+            reply_content = last_reply.get("content", {})
+            if isinstance(reply_content, dict):
+                comment_text = reply_content.get("text", "")
+            elif isinstance(reply_content, str):
+                comment_text = reply_content
+        if not comment_text:
+            content_obj = comment.get("content", {})
+            if isinstance(content_obj, dict):
+                comment_text = content_obj.get("text", "")
+            elif isinstance(content_obj, str):
+                comment_text = content_obj
 
-    # Also check for direct content field (drive.notice.comment_add_v1 format)
+    # Try direct content field
     if not comment_text:
         content_obj = event.get("content", {})
         if isinstance(content_obj, dict):
@@ -1018,71 +946,94 @@ def _forward_comment_to_founders(event_type, event, full_body):
         elif isinstance(content_obj, str):
             comment_text = content_obj
 
-    # File / record info
+    # Try comment_text directly
+    if not comment_text:
+        comment_text = event.get("comment_text", "")
+
+    # --- Extract file/record info ---
     file_token = event.get("file_token", "") or event.get("file_key", "")
-    file_name = event.get("file_name", "") or file_token
+    file_type = event.get("file_type", "")
+    file_name = event.get("file_name", "") or event.get("title", "")
     record_id = event.get("record_id", "")
     table_id = event.get("table_id", "")
+    comment_id = ""
+    
+    # Check for comment_id
+    if isinstance(comment, dict):
+        comment_id = comment.get("comment_id", "")
 
-    # Try to find table_id from the file_token context if not directly available
+    # Try context object
     if not table_id:
         context = event.get("context", {})
-        table_id = context.get("table_id", "")
+        if isinstance(context, dict):
+            table_id = context.get("table_id", "")
+            if not record_id:
+                record_id = context.get("record_id", "")
 
-    # Build record link if we have enough info
+    # Check if this is a Base (bitable) comment by file_type or file_token
+    is_base_comment = file_type == "bitable" or (file_token and file_token == LARK_BASE_APP_TOKEN)
+
+    logger.info(f"Comment details: commenter={commenter_name}, file_token={file_token}, file_type={file_type}, table_id={table_id}, record_id={record_id}, comment_text={comment_text[:100] if comment_text else 'empty'}")
+
+    # --- Build record link ---
     link = ""
     if table_id and record_id:
         link = record_link(table_id, record_id)
+    elif file_token and file_token == LARK_BASE_APP_TOKEN:
+        # It's our Base but we don't know the table/record, link to the Base
+        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"
     elif record_id:
         link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?record={record_id}"
+    elif file_token:
+        # Try to link to the file
+        link = f"https://ojpglhhzxlvc.jp.larksuite.com/base/{file_token}"
 
-    # Unique action ID for the resolve button
-    action_id = f"comment_resolved_{record_id or file_token or ''}_{int(time.time())}"
+    # --- Build the card ---
+    action_id = f"comment_resolved_{record_id or file_token or 'unknown'}_{int(time.time())}"
 
-    # Build card
-    elements = []
     body_text = f"**{commenter_name}** added a comment"
     if file_name:
         body_text += f" in **{file_name}**"
     if record_id:
         body_text += f" (Record: {record_id})"
-    elements.append({"tag": "markdown", "content": body_text})
-
+    
+    elements = [{"tag": "markdown", "content": body_text}]
+    
     if comment_text:
-        elements.append({"tag": "markdown", "content": f"> {comment_text[:500]}"})
+        # Clean up comment text - remove @mentions markup if present
+        clean_text = re.sub(r'<at [^>]*>([^<]*)</at>', r'@\1', comment_text)
+        elements.append({"tag": "markdown", "content": f"> {clean_text[:500]}"})
 
     # Action buttons: View Record + Mark as Resolved
     buttons = []
     if link:
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"},
+            "text": {"tag": "plain_text", "content": "📎 View Record"},
             "type": "default",
             "url": link,
         })
-
     if _is_action_clicked(action_id):
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "Resolved \u2713"},
+            "text": {"tag": "plain_text", "content": "Resolved ✓"},
             "type": "default",
             "disabled": True,
         })
     else:
         buttons.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"},
+            "text": {"tag": "plain_text", "content": "✅ Mark as Resolved"},
             "type": "primary",
-            "value": {"action": action_id, "commenter": commenter_name},
+            "value": {"action": action_id, "commenter": commenter_name, "record": record_id},
         })
-
     if buttons:
         elements.append({"tag": "action", "actions": buttons})
 
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": f"\ud83d\udcac New Comment \u2014 {commenter_name}"},
+            "title": {"tag": "plain_text", "content": f"💬 New Comment — {commenter_name}"},
             "template": "orange",
         },
         "elements": elements,
@@ -1090,6 +1041,14 @@ def _forward_comment_to_founders(event_type, event, full_body):
 
     lark.send_card(card, chat_id=target_chat)
     logger.info(f"Comment event forwarded to Urgent Approvals: {event_type} by {commenter_name}")
+
+# Store last N events for debugging
+_recent_events = []
+MAX_RECENT_EVENTS = 50
+
+@app.route("/debug-events", methods=["GET"])
+def debug_events():
+    return jsonify({"events": _recent_events, "count": len(_recent_events)})
 
 @app.route("/health", methods=["GET"])
 def health():
