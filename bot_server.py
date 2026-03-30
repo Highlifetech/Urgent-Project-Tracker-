@@ -739,37 +739,6 @@ def webhook():
     sender = event.get("sender", {})
     sender_type = sender.get("sender_type", "")
     logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, chat_id={chat_id}, sender_type={sender_type}")
-    # --- Forward comment notifications from 2026 PRODUCTION channel ---
-    PRODUCTION_2026_CHAT = os.environ.get("LARK_CHAT_ID_PRODUCTION_2026", "")
-    if chat_id and PRODUCTION_2026_CHAT and chat_id == PRODUCTION_2026_CHAT and sender_type == "app":
-        logger.info(f"Bot message in 2026 PRODUCTION: type={msg_type}")
-        target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
-        if target_chat:
-            try:
-                message_id = msg.get("message_id", "")
-                if message_id:
-                    lark.forward_message(message_id, target_chat)
-                    logger.info(f"Forwarded message {message_id} to Urgent Approvals")
-            except Exception as fwd_err:
-                logger.warning(f"Forward failed, trying card rebuild: {fwd_err}")
-                try:
-                    content_str = msg.get("content", "{}")
-                    content = json.loads(content_str) if isinstance(content_str, str) else content_str
-                    text_content = content.get("text", str(content)[:500])
-                    action_id = f"comment_resolved_prod2026_{int(time.time())}"
-                    elements = [{"tag": "markdown", "content": text_content}]
-                    actions = [{"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id}}]
-                    elements.append({"tag": "action", "actions": actions})
-                    card = {
-                        "config": {"wide_screen_mode": True},
-                        "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcac Comment Notification"}, "template": "orange"},
-                        "elements": elements,
-                    }
-                    lark.send_card(card, chat_id=target_chat)
-                    logger.info(f"Sent comment card to Urgent Approvals")
-                except Exception as e2:
-                    logger.error(f"Fallback card also failed: {e2}")
-        return jsonify({"code": 0})
     if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
