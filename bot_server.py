@@ -603,21 +603,22 @@ def _build_alert_card(entries, window, assigned):
 # =========================================================================
 
 def check_new_comments():
-    """Poll all tables for new comments and forward to Urgent Approvals chat."""
+    """Poll tables for new comments. Runs in background thread."""
     if not URGENT_APPROVALS_CHAT:
-        logger.warning("No URGENT_APPROVALS_CHAT set, skipping comment check")
-        return {"status": "skipped", "reason": "no_chat_id"}
+        logger.warning("No URGENT_APPROVALS_CHAT set")
+        return
     try:
         tables = lark.get_all_tables()
     except Exception as e:
-        logger.error(f"Comment check - tables fetch error: {e}")
-        return {"status": "error", "detail": str(e)}
+        logger.error(f"Comment check - tables error: {e}")
+        return
     new_count = 0
     errors = 0
+    checked = 0
     for table in tables:
         table_id = table.get("table_id", "")
         table_name = table.get("name", "")
-        if not table_id:
+        if not table_id or _is_excluded_board(table_name):
             continue
         try:
             records = lark.get_table_records(table_id) or []
@@ -625,10 +626,11 @@ def check_new_comments():
             logger.warning(f"Comment check - records error on {table_name}: {str(e)[:60]}")
             errors += 1
             continue
-        for rec in records:
+        for rec in records[:50]:
             record_id = rec.get("record_id", "")
             if not record_id:
                 continue
+            checked += 1
             try:
                 comments = lark.get_record_comments(table_id, record_id)
             except Exception:
@@ -653,9 +655,7 @@ def check_new_comments():
                 except Exception as e:
                     logger.error(f"Comment card send error: {e}")
                     errors += 1
-    logger.info(f"Comment check done: {new_count} new, {errors} errors")
-    return {"status": "ok", "new_comments": new_count, "errors": errors}
-
+    logger.info(f"Comment check done: {new_count} new, {checked} checked, {errors} errors")
 def _build_comment_card(order_num, table_name, user_name, content, link, action_id):
     display_order = order_num or "Unknown Record"
     elements = [
@@ -884,8 +884,8 @@ def check_comments_endpoint():
         provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
-    result = check_new_comments()
-    return jsonify(result)
+    threading.Thread(target=check_new_comments, daemon=True).start()
+    return jsonify({"status": "started", "message": "Comment check running in background"})
 
 @app.route("/health", methods=["GET"])
 def health():
