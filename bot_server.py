@@ -901,6 +901,23 @@ def index():
 _init_db()
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 
+COMMENT_POLL_INTERVAL = int(os.environ.get("COMMENT_POLL_INTERVAL", "300"))  # 5 min default
+
+def _comment_poll_loop():
+    """Background loop that checks for new comments every COMMENT_POLL_INTERVAL seconds."""
+    time.sleep(30)  # Wait 30s after startup before first check
+    while True:
+        try:
+            logger.info("Comment poll loop: starting check...")
+            check_new_comments()
+        except Exception as e:
+            logger.error(f"Comment poll loop error: {e}")
+        time.sleep(COMMENT_POLL_INTERVAL)
+
+if URGENT_APPROVALS_CHAT:
+    threading.Thread(target=_comment_poll_loop, daemon=True).start()
+    logger.info(f"Comment polling started (interval={COMMENT_POLL_INTERVAL}s)")
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
