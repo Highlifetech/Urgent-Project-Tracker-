@@ -26,6 +26,7 @@ from config import (
     FIELD_DUE_DATE, FIELD_PRODUCTION_ARTWORK, FIELD_ASSIGNED_TO,
     SKIP_STATUSES, DIGEST_EXCLUDED_BOARDS,
     LARK_CHAT_ID_DIGEST, DIGEST_SECRET,
+    ALL_ORDERS_VIEW_KEYWORD,
 )
 
 FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
@@ -54,87 +55,87 @@ _memory_history = {}
 # =========================================================================
 
 def record_link(table_id, record_id):
-    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view=vewGgswDcu&record={record_id}"
+        return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view=vewGgswDcu&record={record_id}"
 
 def field_to_text(val):
-    if val is None:
-        return ""
-    if isinstance(val, str):
-        return val
-    if isinstance(val, (int, float)):
-        return str(val)
-    if isinstance(val, list):
-        parts = []
-        for item in val:
-            if isinstance(item, dict):
-                parts.append(item.get("text", item.get("name", str(item))))
-            else:
+        if val is None:
+                    return ""
+                if isinstance(val, str):
+                            return val
+                        if isinstance(val, (int, float)):
+                                    return str(val)
+                                if isinstance(val, list):
+                                            parts = []
+                                            for item in val:
+                                                            if isinstance(item, dict):
+                                                                                parts.append(item.get("text", item.get("name", str(item))))
+                                else:
                 parts.append(str(item))
-        return ", ".join(parts)
+                                            return ", ".join(parts)
     if isinstance(val, dict):
-        return val.get("text", val.get("name", str(val)))
+                return val.get("text", val.get("name", str(val)))
     return str(val)
 
 def get_assigned_to(fields):
-    val = fields.get(FIELD_ASSIGNED_TO) or fields.get("Assigned To", "")
+        val = fields.get(FIELD_ASSIGNED_TO) or fields.get("Assigned To", "")
     name = field_to_text(val)
     if not name or name == "Brendan":
-        return "Brendan"
+                return "Brendan"
     if "hannah" in name.lower():
-        return "Hannah"
+                return "Hannah"
     if "lucy" in name.lower():
-        return "Lucy"
+                return "Lucy"
     return name
 
 def get_assigned_from_table(table_name):
-    tname = (table_name or "").lower()
+        tname = (table_name or "").lower()
     if "hannah" in tname:
-        return "Hannah"
+                return "Hannah"
     if "lucy" in tname:
-        return "Lucy"
+                return "Lucy"
     return "Brendan"
 
 def get_image_key_from_field(fields, field_name="Production Artwork"):
-    val = fields.get(field_name)
+        val = fields.get(field_name)
     if isinstance(val, list) and val:
-        first = val[0]
+                first = val[0]
         if isinstance(first, dict):
-            return first.get("file_token", first.get("token", ""))
-    return ""
+                        return first.get("file_token", first.get("token", ""))
+                return ""
 
 def parse_date_ms(val):
-    if isinstance(val, (int, float)) and val > 1000000000:
-        return val if val > 1000000000000 else val * 1000
-    if isinstance(val, dict):
-        return val.get("timestamp", 0)
-    return 0
+        if isinstance(val, (int, float)) and val > 1000000000:
+                    return val if val > 1000000000000 else val * 1000
+                if isinstance(val, dict):
+                            return val.get("timestamp", 0)
+                        return 0
 
 def ms_to_date(ms):
-    if not ms:
-        return None
-    try:
-        return datetime.utcfromtimestamp(ms / 1000).date()
-    except Exception:
+        if not ms:
+                    return None
+                try:
+                            return datetime.utcfromtimestamp(ms / 1000).date()
+except Exception:
         return None
 
 def _is_excluded_board(table_name):
-    tname = table_name.strip().lower()
+        tname = table_name.strip().lower()
     for excl in DIGEST_EXCLUDED_BOARDS:
-        if tname == excl or tname.startswith(excl):
-            return True
-    return False
+                if tname == excl or tname.startswith(excl):
+                                return True
+                        return False
 
 def get_user_name(open_id):
-    if open_id == HANNAH_OPEN_ID:
-        return "Hannah"
-    if open_id == LUCY_OPEN_ID:
-        return "Lucy"
-    if open_id == BRENDAN_OPEN_ID:
-        return "Brendan"
-    try:
-        info = lark._get(f"/open-apis/contact/v3/users/{open_id}", {"user_id_type": "open_id"})
-        return info.get("data", {}).get("user", {}).get("name", open_id[:10])
-    except Exception:
+        if open_id == HANNAH_OPEN_ID:
+                    return "Hannah"
+                if open_id == LUCY_OPEN_ID:
+                            return "Lucy"
+                        if open_id == BRENDAN_OPEN_ID:
+                                    return "Brendan"
+                                try:
+                                            info = lark._get(f"/open-apis/contact/v3/users/{open_id}", {"user_id_type": "open_id"})
+                                            return info.get("data", {}).get("user", {}).get("name", open_id[:10])
+except Exception:
         return open_id[:10] if open_id else "Unknown"
 
 # =========================================================================
@@ -142,197 +143,207 @@ def get_user_name(open_id):
 # =========================================================================
 
 def _get_db_conn():
-    if not DATABASE_URL:
-        return None
-    try:
-        return psycopg2.connect(DATABASE_URL, connect_timeout=5)
-    except Exception as e:
+        if not DATABASE_URL:
+                    return None
+                try:
+                            return psycopg2.connect(DATABASE_URL, connect_timeout=5)
+except Exception as e:
         logger.error("DB conn error: " + str(e))
         return None
 
 def _init_db():
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if not conn:
-        return
+                return
     try:
-        with conn.cursor() as cur:
-            cur.execute("""CREATE TABLE IF NOT EXISTS conversations (
-                id SERIAL PRIMARY KEY, chat_id TEXT NOT NULL,
-                role TEXT NOT NULL, content TEXT NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW())""")
-            cur.execute("""CREATE TABLE IF NOT EXISTS card_actions (
-                id SERIAL PRIMARY KEY, action_id TEXT UNIQUE NOT NULL,
-                clicked_by TEXT DEFAULT '', clicked_at TIMESTAMPTZ DEFAULT NOW())""")
-            cur.execute("""CREATE TABLE IF NOT EXISTS seen_comments (
-                id SERIAL PRIMARY KEY,
-                comment_id TEXT UNIQUE NOT NULL,
-                table_id TEXT NOT NULL,
-                record_id TEXT NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW())""")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations (chat_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_card_act ON card_actions (action_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_seen_cmt ON seen_comments (comment_id)")
-        conn.commit()
+                with conn.cursor() as cur:
+                                cur.execute("""CREATE TABLE IF NOT EXISTS conversations (
+                                                id SERIAL PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL,
+                                                                content TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW())""")
+                                cur.execute("""CREATE TABLE IF NOT EXISTS card_actions (
+                                    id SERIAL PRIMARY KEY, action_id TEXT UNIQUE NOT NULL,
+                                    clicked_by TEXT DEFAULT '', clicked_at TIMESTAMPTZ DEFAULT NOW())""")
+                                cur.execute("""CREATE TABLE IF NOT EXISTS seen_comments (
+                                    id SERIAL PRIMARY KEY, comment_id TEXT UNIQUE NOT NULL,
+                                    table_id TEXT NOT NULL, record_id TEXT NOT NULL,
+                                    created_at TIMESTAMPTZ DEFAULT NOW())""")
+                                cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations (chat_id)")
+                                cur.execute("CREATE INDEX IF NOT EXISTS idx_card_act ON card_actions (action_id)")
+                                cur.execute("CREATE INDEX IF NOT EXISTS idx_seen_cmt ON seen_comments (comment_id)")
+                            conn.commit()
         conn.close()
         logger.info("DB tables ready")
-    except Exception as e:
+except Exception as e:
         logger.error("DB init error: " + str(e))
         try:
-            conn.close()
-        except Exception:
+                        conn.close()
+except Exception:
             pass
 
 def _is_action_clicked(action_id):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if not conn:
-        return False
+                return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM card_actions WHERE action_id = %s", (action_id,))
-            result = cur.fetchone()
-        conn.close()
+                with conn.cursor() as cur:
+                                cur.execute("SELECT 1 FROM card_actions WHERE action_id = %s", (action_id,))
+                                result = cur.fetchone()
+                            conn.close()
         return result is not None
-    except Exception:
+except Exception:
         try:
-            conn.close()
-        except Exception:
+                        conn.close()
+except Exception:
             pass
         return False
 
 def _mark_action_clicked(action_id, clicked_by=""):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if not conn:
-        return False
+                return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO card_actions (action_id, clicked_by) VALUES (%s, %s) ON CONFLICT (action_id) DO NOTHING", (action_id, clicked_by))
-        conn.commit()
+                with conn.cursor() as cur:
+                                cur.execute("INSERT INTO card_actions (action_id, clicked_by) VALUES (%s, %s) ON CONFLICT (action_id) DO NOTHING", (action_id, clicked_by))
+                            conn.commit()
         conn.close()
         return True
-    except Exception as e:
+except Exception as e:
         logger.error("Mark action error: " + str(e))
         try:
-            conn.close()
-        except Exception:
+                        conn.close()
+except Exception:
             pass
         return False
 
 def _is_comment_seen(comment_id):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if not conn:
-        return False
+                return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM seen_comments WHERE comment_id = %s", (comment_id,))
-            result = cur.fetchone()
-        conn.close()
+                with conn.cursor() as cur:
+                                cur.execute("SELECT 1 FROM seen_comments WHERE comment_id = %s", (comment_id,))
+                                result = cur.fetchone()
+                            conn.close()
         return result is not None
-    except Exception:
+except Exception:
         try:
-            conn.close()
-        except Exception:
+                        conn.close()
+except Exception:
             pass
         return False
 
 def _mark_comment_seen(comment_id, table_id, record_id):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if not conn:
-        return False
+                return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO seen_comments (comment_id, table_id, record_id) VALUES (%s, %s, %s) ON CONFLICT (comment_id) DO NOTHING", (comment_id, table_id, record_id))
-        conn.commit()
+                with conn.cursor() as cur:
+                                cur.execute("INSERT INTO seen_comments (comment_id, table_id, record_id) VALUES (%s, %s, %s) ON CONFLICT (comment_id) DO NOTHING", (comment_id, table_id, record_id))
+                            conn.commit()
         conn.close()
         return True
-    except Exception as e:
+except Exception as e:
         logger.error("Mark comment seen error: " + str(e))
         try:
-            conn.close()
-        except Exception:
+                        conn.close()
+except Exception:
             pass
         return False
 
 def _get_conversation(chat_id):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if conn:
-        try:
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("DELETE FROM conversations WHERE created_at < NOW() - INTERVAL '%s seconds'", (CONVERSATION_TTL,))
-                cur.execute("SELECT role, content FROM conversations WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s", (chat_id, CONVERSATION_MAX_TURNS * 2))
-                rows = cur.fetchall()
-            conn.commit()
+                try:
+                                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                                                    cur.execute("DELETE FROM conversations WHERE created_at < NOW() - INTERVAL '%s seconds'", (CONVERSATION_TTL,))
+                                                    cur.execute("SELECT role, content FROM conversations WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s", (chat_id, CONVERSATION_MAX_TURNS * 2))
+                                                    rows = cur.fetchall()
+                                                conn.commit()
             conn.close()
             return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
-        except Exception as e:
+except Exception as e:
             logger.error("DB read: " + str(e))
             try:
-                conn.close()
-            except Exception:
+                                conn.close()
+except Exception:
                 pass
     return _memory_history.get(chat_id, [])
 
 def _add_to_conversation(chat_id, role, content):
-    conn = _get_db_conn()
+        conn = _get_db_conn()
     if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO conversations (chat_id, role, content) VALUES (%s, %s, %s)", (chat_id, role, content[:8000]))
-            conn.commit()
+                try:
+                                with conn.cursor() as cur:
+                                                    cur.execute("INSERT INTO conversations (chat_id, role, content) VALUES (%s, %s, %s)", (chat_id, role, content[:8000]))
+                                                conn.commit()
             conn.close()
             return
-        except Exception:
+except Exception:
             try:
-                conn.close()
-            except Exception:
+                                conn.close()
+except Exception:
                 pass
     if chat_id not in _memory_history:
-        _memory_history[chat_id] = []
+                _memory_history[chat_id] = []
     _memory_history[chat_id].append({"role": role, "content": content[:8000]})
     if len(_memory_history[chat_id]) > CONVERSATION_MAX_TURNS * 2:
-        _memory_history[chat_id] = _memory_history[chat_id][-CONVERSATION_MAX_TURNS * 2:]
+                _memory_history[chat_id] = _memory_history[chat_id][-CONVERSATION_MAX_TURNS * 2:]
 
 # =========================================================================
-# FETCH ALL PROJECTS (cached)
+# FETCH ALL PROJECTS (cached, uses ALL ORDERS views to avoid duplicates)
 # =========================================================================
+
+def _find_all_orders_view(table_id):
+        """Find the ALL ORDERS view for a table. Returns view_id or None."""
+    try:
+                views = lark.list_views(table_id)
+        for v in views:
+                        vname = (v.get("view_name", "") or "").lower()
+            if ALL_ORDERS_VIEW_KEYWORD in vname:
+                                return v.get("view_id")
+except Exception as e:
+        logger.warning(f"list_views error for {table_id}: {str(e)[:60]}")
+    return None
 
 def fetch_all_projects():
-    global _projects_cache, _projects_cache_time
+        global _projects_cache, _projects_cache_time
     now = time.time()
     if _projects_cache and (now - _projects_cache_time) < PROJECTS_CACHE_TTL:
-        return _projects_cache
+                return _projects_cache
     try:
-        tables = lark.get_all_tables()
+                tables = lark.get_all_tables()
         all_records = []
         for table in tables:
-            table_id = table.get("table_id", "")
+                        table_id = table.get("table_id", "")
             table_name = table.get("name", table_id)
             if not table_id or _is_excluded_board(table_name):
-                continue
+                                continue
+            view_id = _find_all_orders_view(table_id)
             try:
-                records = lark.get_table_records(table_id) or []
+                                records = lark.get_table_records(table_id, view_id=view_id) or []
                 for rec in records:
-                    flat = dict(rec.get("fields", {}))
-                    flat["__table_name__"] = table_name
-                    flat["__table_id__"] = table_id
-                    flat["__record_id__"] = rec.get("record_id", "")
-                    all_records.append(flat)
-            except Exception as e:
+                                        flat = dict(rec.get("fields", {}))
+                                        flat["__table_name__"] = table_name
+                                        flat["__table_id__"] = table_id
+                                        flat["__record_id__"] = rec.get("record_id", "")
+                                        all_records.append(flat)
+except Exception as e:
                 logger.warning(f"Table {table_name}: {str(e)[:80]}")
         _projects_cache = all_records
         _projects_cache_time = now
-        logger.info(f"Fetched {len(all_records)} records")
+        logger.info(f"Fetched {len(all_records)} records from ALL ORDERS views")
         return all_records
-    except Exception as e:
+except Exception as e:
         logger.error(f"Lark fetch error: {e}")
         return _projects_cache
 
 def _fetch_bot_open_id():
-    global BOT_OPEN_ID
+        global BOT_OPEN_ID
     try:
-        info = lark.get_bot_info()
+                info = lark.get_bot_info()
         BOT_OPEN_ID = info.get("open_id", "")
         logger.info(f"Bot open_id: {BOT_OPEN_ID}")
-    except Exception as e:
+except Exception as e:
         logger.warning(f"Bot info error: {e}")
 
 # =========================================================================
@@ -340,73 +351,73 @@ def _fetch_bot_open_id():
 # =========================================================================
 
 def build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key=""):
-    color = "orange" if assigned_to == "Hannah" else "red"
+        color = "orange" if assigned_to == "Hannah" else "red"
     link = record_link(table_id, record_id)
     action_id = f"notify_viewed_{table_id}_{record_id}"
     elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Client:** {client}\n**Assigned To:** {assigned_to}"}]
     if image_key:
-        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+                elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     if _is_action_clicked(action_id):
-        elements.append({"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "Viewed \u2713"}, "type": "default", "disabled": True}]})
-    else:
+                elements.append({"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "Viewed \u2713"}, "type": "default", "disabled": True}]})
+else:
         elements.append({"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udc41 Mark as Viewed"}, "type": "primary", "value": {"action": action_id}}]})
     elements.append({"tag": "markdown", "content": f"[Open Record]({link})"})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce2 Notify: {order_num} - {client}"}, "template": color}, "elements": elements}
 
 def handle_notify_button(table_id, record_id):
-    try:
-        record = lark.get_record(table_id, record_id)
-        fields = record.get("fields", {})
-        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
-        client = field_to_text(fields.get(FIELD_CLIENT, ""))
-        assigned_to = get_assigned_to(fields)
-        if assigned_to == "Brendan":
-            assigned_to = get_assigned_from_table("")
-        image_key = get_image_key_from_field(fields)
-        card = build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key)
-        if FOUNDERS_CHAT:
-            lark.send_card(card, chat_id=FOUNDERS_CHAT)
-            logger.info(f"Notify card sent for {order_num}")
-        return {"status": "ok", "order": order_num}
-    except Exception as e:
-        logger.error(f"Notify error: {e}")
-        return {"status": "error", "detail": str(e)}
+        try:
+                    record = lark.get_record(table_id, record_id)
+                    fields = record.get("fields", {})
+                    order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+                    client = field_to_text(fields.get(FIELD_CLIENT, ""))
+                    assigned_to = get_assigned_to(fields)
+                    if assigned_to == "Brendan":
+                                    assigned_to = get_assigned_from_table("")
+                                image_key = get_image_key_from_field(fields)
+                    card = build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key)
+                    if FOUNDERS_CHAT:
+                                    lark.send_card(card, chat_id=FOUNDERS_CHAT)
+                                logger.info(f"Notify card sent for {order_num}")
+                    return {"status": "ok", "order": order_num}
+except Exception as e:
+            logger.error(f"Notify error: {e}")
+            return {"status": "error", "detail": str(e)}
 
-# =========================================================================
-# FEATURE 2 - UPDATE TEAM CARD
-# =========================================================================
+    # =========================================================================
+    # FEATURE 2 - UPDATE TEAM CARD
+    # =========================================================================
 
-def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
-    link = record_link(table_id, record_id)
-    action_id = f"mark_resolved_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}\n**Updated by:** {assigned_to}"}]
-    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
-    if _is_action_clicked(action_id):
-        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
-    else:
+    def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
+            link = record_link(table_id, record_id)
+            action_id = f"mark_resolved_{table_id}_{record_id}"
+            elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}\n**Updated by:** {assigned_to}"}]
+            view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
+            if _is_action_clicked(action_id):
+                        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
-    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
+        elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
+        return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
-    try:
-        record = lark.get_record(table_id, record_id)
-        fields = record.get("fields", {})
-        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
-        description = field_to_text(fields.get(FIELD_DESCRIPTION, ""))
-        assigned_to = get_assigned_to(fields)
-        if assigned_to == "Brendan":
-            tables = lark.get_all_tables()
-            for t in tables:
-                if t.get("table_id") == table_id:
-                    assigned_to = get_assigned_from_table(t.get("name", ""))
-                    break
-        card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
-        if FOUNDERS_CHAT:
-            lark.send_card(card, chat_id=FOUNDERS_CHAT)
-        logger.info(f"Update Team card for {order_num}")
-        return {"status": "ok", "order": order_num}
-    except Exception as e:
+        try:
+                    record = lark.get_record(table_id, record_id)
+                    fields = record.get("fields", {})
+                    order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+                    description = field_to_text(fields.get(FIELD_DESCRIPTION, ""))
+                    assigned_to = get_assigned_to(fields)
+                    if assigned_to == "Brendan":
+                                    tables = lark.get_all_tables()
+                                    for t in tables:
+                                                        if t.get("table_id") == table_id:
+                                                                                assigned_to = get_assigned_from_table(t.get("name", ""))
+                                                                                break
+                                                                    card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
+                                                if FOUNDERS_CHAT:
+                                                                lark.send_card(card, chat_id=FOUNDERS_CHAT)
+                                                            logger.info(f"Update Team card for {order_num}")
+                                return {"status": "ok", "order": order_num}
+except Exception as e:
         logger.error(f"Update Team error: {e}")
         return {"status": "error", "detail": str(e)}
 
@@ -415,187 +426,236 @@ def handle_update_team_button(table_id, record_id):
 # =========================================================================
 
 def build_status_request_card(order_num, assigned_to, table_id, record_id, image_key=""):
-    link = record_link(table_id, record_id)
+        link = record_link(table_id, record_id)
     action_id = f"mark_updated_{table_id}_{record_id}"
     elements = [{"tag": "markdown", "content": f"**\ud83d\udcca Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan"}]
     if image_key:
-        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+                elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        ack_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated \u2713"}, "type": "default", "disabled": True}
-    else:
+                ack_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated \u2713"}, "type": "default", "disabled": True}
+else:
         ack_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, ack_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "blue"}, "elements": elements}
 
 def handle_status_request_button(table_id, record_id):
-    try:
-        record = lark.get_record(table_id, record_id)
+        try:
+                    record = lark.get_record(table_id, record_id)
         fields = record.get("fields", {})
         order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
         if not order_num:
-            for alt in ["Sales Order", "Order Number", "SO#", "Order#"]:
-                order_num = field_to_text(fields.get(alt, ""))
-                if order_num:
-                    break
-        assigned_to = get_assigned_to(fields)
-        if assigned_to == "Brendan":
-            tables = lark.get_all_tables()
-            for t in tables:
-                if t.get("table_id") == table_id:
-                    assigned_to = get_assigned_from_table(t.get("name", ""))
-                    break
-        image_key = get_image_key_from_field(fields)
-        card = build_status_request_card(order_num, assigned_to, table_id, record_id, image_key)
+                        for alt in ["Sales Order", "Order Number", "SO#", "Order#"]:
+                                            order_num = field_to_text(fields.get(alt, ""))
+                                            if order_num:
+                                                                    break
+                                                        assigned_to = get_assigned_to(fields)
+                                    if assigned_to == "Brendan":
+                                                    tables = lark.get_all_tables()
+                                                    for t in tables:
+                                                                        if t.get("table_id") == table_id:
+                                                                                                assigned_to = get_assigned_from_table(t.get("name", ""))
+                                                                                                break
+                                                                                    image_key = get_image_key_from_field(fields)
+                                                                card = build_status_request_card(order_num, assigned_to, table_id, record_id, image_key)
         target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
         if target:
-            try:
-                lark.send_card(card, chat_id=target)
-            except Exception:
-                card = build_status_request_card(order_num, assigned_to, table_id, record_id)
-                lark.send_card(card, chat_id=target)
-        logger.info(f"Status Request card for {order_num}")
+                        try:
+                                            lark.send_card(card, chat_id=target)
+except Exception:
+                    card = build_status_request_card(order_num, assigned_to, table_id, record_id)
+                    lark.send_card(card, chat_id=target)
+            logger.info(f"Status Request card for {order_num}")
         return {"status": "ok", "order": order_num}
-    except Exception as e:
+except Exception as e:
         logger.error(f"Status Request error: {e}")
         return {"status": "error", "detail": str(e)}
 
 # =========================================================================
-# FEATURE 3 - MORNING DIGEST
+# FEATURE 3 - MORNING DIGEST (Founders Channel)
 # =========================================================================
 
 def build_morning_digest(projects):
-    today = datetime.now(timezone.utc).date()
-    status_counts = {}
-    waiting_art = []
-    due_7 = []
-    due_14 = []
-    overdue = []
-    seen = set()
+        """Build the full morning digest with all 6 sections."""
+        today = datetime.now(timezone.utc).date()
+        status_counts = {}
+        waiting_art = []
+        due_7 = []
+        due_14 = []
+        overdue = []
+        seen = set()
+        person_projects = {"Brendan": [], "Hannah": [], "Lucy": []}
+
     for p in projects:
-        order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
-        if not order_num or order_num in seen:
-            continue
-        seen.add(order_num)
+                order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
+                if not order_num or order_num in seen:
+                                continue
+                            seen.add(order_num)
+
         status = field_to_text(p.get(FIELD_STATUS, "")).strip()
         if not status:
-            continue
-        status_upper = status.upper()
+                        continue
+                    status_upper = status.upper()
         status_counts[status] = status_counts.get(status, 0) + 1
+
         if any(s in status_upper for s in ("SHIPPED", "RESOLVED", "CANCELLED")):
-            continue
+                        continue
+
         client = field_to_text(p.get(FIELD_CLIENT, ""))
         tname = p.get("__table_name__", "")
         tid = p.get("__table_id__", "")
         rid = p.get("__record_id__", "")
         link = record_link(tid, rid)
+
+        assigned = get_assigned_to(p)
+        if assigned == "Brendan":
+                        assigned = get_assigned_from_table(tname)
+
         due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
         due_date = ms_to_date(due_ms)
+
         if "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
-            waiting_art.append({"order": order_num, "link": link, "client": client})
+                        waiting_art.append({"order": order_num, "link": link, "client": client})
+
         if due_date:
-            days = (due_date - today).days
-            entry = {"order": order_num, "client": client, "board": tname, "date": due_date, "days": days, "status": status, "link": link}
-            if days < 0:
-                overdue.append(entry)
-            elif days <= 7:
+                        days = (due_date - today).days
+                        entry = {"order": order_num, "client": client, "board": tname, "date": due_date, "days": days, "status": status, "link": link, "assigned": assigned}
+                        if days < 0:
+                                            overdue.append(entry)
+        elif days <= 7:
                 due_7.append(entry)
-            elif days <= 14:
+elif days <= 14:
                 due_14.append(entry)
+
+        if assigned in person_projects:
+                        person_projects[assigned].append({"order": order_num, "client": client, "status": status, "days": (due_date - today).days if due_date else None, "board": tname})
+
     overdue.sort(key=lambda x: x["days"])
     due_7.sort(key=lambda x: x["days"])
     due_14.sort(key=lambda x: x["days"])
-    s = []
-    s.append("**Project Overview**")
+
+    # --- Section 1: Project Overview ---
+    s = ["**\ud83d\udcca Project Overview**"]
     for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
-        s.append(f"  {st}: {c}")
-    s.append(f"\n**Need Artwork: {len(waiting_art)} projects**")
+                s.append(f"  {st}: **{c}**")
+
+    # --- Section 2: Need Artwork ---
+    s.append(f"\n**\ud83c\udfa8 Need Artwork: {len(waiting_art)} projects**")
     for w in waiting_art:
-        s.append(f"  [{w['order']}]({w['link']}) - {w['client']}")
-    s.append(f"\n**Overdue: {len(overdue)} projects**")
-    for o in overdue:
-        s.append(f"  {o['order']} - {o['client']} - {o['board']} - **{abs(o['days'])} days overdue**")
-    s.append(f"\n**Due Within 7 Days: {len(due_7)} projects**")
+                s.append(f"  [{w['order']}]({w['link']}) \u2014 {w['client']}")
+
+    # --- Section 3: Due Within 7 Days ---
+    s.append(f"\n**\u23f0 Due Within 7 Days: {len(due_7)} projects**")
     for d in due_7:
-        s.append(f"  {d['order']} - {d['client']} - {d['board']} ({d['days']}d left)")
-    s.append(f"\n**Due Within 14 Days: {len(due_14)} projects**")
+                s.append(f"  {d['order']} \u2014 {d['client']} \u2014 {d['board']} ({d['days']}d left)")
+
+    # --- Section 4: Due Within 14 Days ---
+    s.append(f"\n**\ud83d\udcc5 Due Within 14 Days: {len(due_14)} projects**")
     for d in due_14:
-        s.append(f"  {d['order']} - {d['client']} - {d['board']} ({d['days']}d left)")
+                s.append(f"  {d['order']} \u2014 {d['client']} \u2014 {d['board']} ({d['days']}d left)")
+
+    # --- Section 5: Overdue Projects ---
+    s.append(f"\n**\ud83d\udea8 Overdue: {len(overdue)} projects**")
+    for o in overdue:
+                s.append(f"  {o['order']} \u2014 {o['client']} \u2014 {o['board']} \u2014 **{abs(o['days'])} days overdue**")
+
     digest = "\n".join(s)
+
+    # --- Section 6: General Summary (AI) ---
     try:
-        prompt = f"Write 2-3 sentences about what Brendan, Hannah, and Lucy should focus on today. Be concise.\n\n{digest}"
-        resp = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=500, system="You are Iron Bot. Brief daily focus summary for HLT team.", messages=[{"role": "user", "content": prompt}])
-        digest += f"\n\n**Daily Focus**\n{resp.content[0].text.strip()}"
-    except Exception as e:
-        logger.error(f"Summary error: {e}")
+                brendan_summary = _person_summary("Brendan", person_projects.get("Brendan", []))
+        hannah_summary = _person_summary("Hannah", person_projects.get("Hannah", []))
+        lucy_summary = _person_summary("Lucy", person_projects.get("Lucy", []))
+        summary_data = f"Overdue: {len(overdue)}, Due 7d: {len(due_7)}, Due 14d: {len(due_14)}, Waiting Art: {len(waiting_art)}\n"
+        summary_data += f"Brendan: {brendan_summary}\nHannah: {hannah_summary}\nLucy: {lucy_summary}"
+        prompt = f"Write a brief daily focus summary for the HLT production team. Address what Brendan, Hannah, and Lucy each need to focus on today. Flag anything urgent (overdue or due soon). Be direct and concise, 3-5 sentences.\n\n{summary_data}"
+        resp = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=600, system="You are Iron Bot, HLT's production assistant. Write a brief, actionable daily summary.", messages=[{"role": "user", "content": prompt}])
+        digest += f"\n\n**\ud83d\udcdd Daily Focus**\n{resp.content[0].text.strip()}"
+except Exception as e:
+        logger.error(f"AI summary error: {e}")
+
     return digest
+
+def _person_summary(name, projects):
+        """Build a quick stats line for one person."""
+    if not projects:
+                return "No active projects"
+    overdue_count = sum(1 for p in projects if p.get("days") is not None and p["days"] < 0)
+    due_soon = sum(1 for p in projects if p.get("days") is not None and 0 <= p["days"] <= 7)
+    total = len(projects)
+    parts = [f"{total} active"]
+    if overdue_count:
+                parts.append(f"{overdue_count} OVERDUE")
+    if due_soon:
+                parts.append(f"{due_soon} due within 7d")
+    return ", ".join(parts)
 
 # =========================================================================
 # FEATURE 4 - DUE DATE ALERTS
 # =========================================================================
 
 def send_due_date_alerts():
-    projects = fetch_all_projects()
+        projects = fetch_all_projects()
     today = datetime.now(timezone.utc).date()
     alerts_7 = {}
     alerts_14 = {}
     seen = set()
     for p in projects:
-        order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
+                order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
         if not order_num or order_num in seen:
-            continue
-        seen.add(order_num)
+                        continue
+                    seen.add(order_num)
         status = field_to_text(p.get(FIELD_STATUS, "")).strip().upper()
         if any(s in status for s in ("SHIPPED", "ARTWORK CONFIRMED", "RESOLVED", "CANCELLED")):
-            continue
-        due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
+                        continue
+                    due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
         due_date = ms_to_date(due_ms)
         if not due_date:
-            continue
-        days = (due_date - today).days
+                        continue
+                    days = (due_date - today).days
         if days < 0 or days > 14:
-            continue
-        tname = p.get("__table_name__", "")
+                        continue
+                    tname = p.get("__table_name__", "")
         assigned = get_assigned_to(p)
         if assigned == "Brendan":
-            assigned = get_assigned_from_table(tname)
-        client = field_to_text(p.get(FIELD_CLIENT, ""))
+                        assigned = get_assigned_from_table(tname)
+                    client = field_to_text(p.get(FIELD_CLIENT, ""))
         tid = p.get("__table_id__", "")
         rid = p.get("__record_id__", "")
         link = record_link(tid, rid)
         entry = {"order": order_num, "client": client, "date": due_date.strftime("%m/%d/%Y"), "days": days, "status": field_to_text(p.get(FIELD_STATUS, "")), "link": link, "tid": tid, "rid": rid}
         if days <= 7:
-            alerts_7.setdefault(assigned, []).append(entry)
-        else:
+                        alerts_7.setdefault(assigned, []).append(entry)
+else:
             alerts_14.setdefault(assigned, []).append(entry)
     for assigned, entries in alerts_7.items():
-        card = _build_alert_card(entries, 7, assigned)
+                card = _build_alert_card(entries, 7, assigned)
         target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
         if target:
-            lark.send_card(card, chat_id=target)
-    for assigned, entries in alerts_14.items():
-        card = _build_alert_card(entries, 14, assigned)
-        target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
-        if target:
-            lark.send_card(card, chat_id=target)
-    logger.info(f"Due alerts sent: {len(alerts_7)} groups (7d), {len(alerts_14)} groups (14d)")
+                        lark.send_card(card, chat_id=target)
+                for assigned, entries in alerts_14.items():
+                            card = _build_alert_card(entries, 14, assigned)
+                            target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
+                            if target:
+                                            lark.send_card(card, chat_id=target)
+                                    logger.info(f"Due alerts sent: {len(alerts_7)} groups (7d), {len(alerts_14)} groups (14d)")
 
 def _build_alert_card(entries, window, assigned):
-    color = "yellow" if window == 7 else "orange"
+        color = "yellow" if window == 7 else "orange"
     title = f"Due Within {window} Days"
     lines = []
     actions = []
     for e in entries:
-        lines.append(f"**{e['order']}** - {e['client']} | In-Hand: {e['date']} | {e['days']}d left | {e['status']}")
+                lines.append(f"**{e['order']}** - {e['client']} | In-Hand: {e['date']} | {e['days']}d left | {e['status']}")
         lines.append(f"  [View Record]({e['link']})")
         aid = f"ack_{e['tid']}_{e['rid']}"
         if _is_action_clicked(aid):
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledged {e['order']}"}, "type": "default", "disabled": True})
-        else:
+                        actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledged {e['order']}"}, "type": "default", "disabled": True})
+else:
             actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledge {e['order']}"}, "type": "primary", "value": {"action": aid}})
     elements = [{"tag": "markdown", "content": "\n".join(lines)}]
     if actions:
-        elements.append({"tag": "action", "actions": actions[:4]})
+                elements.append({"tag": "action", "actions": actions[:4]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} - {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
@@ -603,68 +663,69 @@ def _build_alert_card(entries, window, assigned):
 # =========================================================================
 
 def check_new_comments():
-    """Poll tables for new comments. Runs in background thread."""
+        """Poll tables for new comments. Runs in background thread."""
     if not URGENT_APPROVALS_CHAT:
-        logger.warning("No URGENT_APPROVALS_CHAT set")
+                logger.warning("No URGENT_APPROVALS_CHAT set")
         return
     try:
-        tables = lark.get_all_tables()
-    except Exception as e:
+                tables = lark.get_all_tables()
+except Exception as e:
         logger.error(f"Comment check - tables error: {e}")
         return
     new_count = 0
     errors = 0
     checked = 0
     for table in tables:
-        table_id = table.get("table_id", "")
+                table_id = table.get("table_id", "")
         table_name = table.get("name", "")
         if not table_id or _is_excluded_board(table_name):
-            continue
+                        continue
         try:
-            records = lark.get_table_records(table_id) or []
-        except Exception as e:
+                        records = lark.get_table_records(table_id) or []
+except Exception as e:
             logger.warning(f"Comment check - records error on {table_name}: {str(e)[:60]}")
             errors += 1
             continue
         for rec in records[:50]:
-            record_id = rec.get("record_id", "")
+                        record_id = rec.get("record_id", "")
             if not record_id:
-                continue
-            checked += 1
+                                continue
+                            checked += 1
             try:
-                comments = lark.get_record_comments(table_id, record_id)
+                                comments = lark.get_record_comments(table_id, record_id)
             except Exception:
                 continue
             if not comments:
-                continue
-            fields = rec.get("fields", {})
+                                continue
+                            fields = rec.get("fields", {})
             order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
             for comment in comments:
-                cid = comment.get("comment_id", "")
-                if not cid or _is_comment_seen(cid):
-                    continue
-                _mark_comment_seen(cid, table_id, record_id)
+                                cid = comment.get("comment_id", "")
+                                if not cid or _is_comment_seen(cid):
+                                                        continue
+                                                    _mark_comment_seen(cid, table_id, record_id)
                 user_name = comment.get("user_name", "Unknown")
                 content = comment.get("content", "")
                 link = record_link(table_id, record_id)
                 action_id = f"comment_resolved_{table_id}_{record_id}_{cid}"
                 card = _build_comment_card(order_num, table_name, user_name, content, link, action_id)
                 try:
-                    lark.send_card(card, chat_id=URGENT_APPROVALS_CHAT)
-                    new_count += 1
-                except Exception as e:
+                                        lark.send_card(card, chat_id=URGENT_APPROVALS_CHAT)
+                                        new_count += 1
+except Exception as e:
                     logger.error(f"Comment card send error: {e}")
                     errors += 1
     logger.info(f"Comment check done: {new_count} new, {checked} checked, {errors} errors")
+
 def _build_comment_card(order_num, table_name, user_name, content, link, action_id):
-    display_order = order_num or "Unknown Record"
+        display_order = order_num or "Unknown Record"
     elements = [
-        {"tag": "markdown", "content": f"**From:** {user_name}\n**Record:** {display_order}\n**Board:** {table_name}\n\n{content[:500]}"},
+                {"tag": "markdown", "content": f"**From:** {user_name}\n**Record:** {display_order}\n**Board:** {table_name}\n\n{content[:500]}"},
     ]
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udd17 View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
-    else:
+                resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcac Comment: {display_order}"}, "template": "turquoise"}, "elements": elements}
@@ -674,7 +735,7 @@ def _build_comment_card(order_num, table_name, user_name, content, link, action_
 # =========================================================================
 
 def handle_card_callback(body):
-    action = body.get("action", {})
+        action = body.get("action", {})
     action_value = action.get("value", {})
     action_str = action_value.get("action", "")
     operator = body.get("operator", {})
@@ -682,40 +743,40 @@ def handle_card_callback(body):
     operator_name = get_user_name(operator_id)
     logger.info(f"Card callback: {action_str} by {operator_name}")
     if not action_str:
-        return {"toast": {"type": "info", "content": "No action"}}
+                return {"toast": {"type": "info", "content": "No action"}}
     if action_str.startswith("notify_viewed_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already viewed"}}
+                if _is_action_clicked(action_str):
+                                return {"toast": {"type": "info", "content": "Already viewed"}}
         _mark_action_clicked(action_str, operator_name)
         return {"toast": {"type": "success", "content": f"Viewed by {operator_name}"}}
     if action_str.startswith("mark_resolved_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already resolved"}}
+                if _is_action_clicked(action_str):
+                                return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
         assigned_to = action_value.get("assigned_to", "")
         if FOUNDERS_CHAT:
-            lark.send_text(f"\u2705 {operator_name} resolved {order_num} (assigned to {assigned_to})", chat_id=FOUNDERS_CHAT)
+                        lark.send_text(f"\u2705 {operator_name} resolved {order_num} (assigned to {assigned_to})", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
     if action_str.startswith("ack_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already acknowledged"}}
+                if _is_action_clicked(action_str):
+                                return {"toast": {"type": "info", "content": "Already acknowledged"}}
         _mark_action_clicked(action_str, operator_name)
         if FOUNDERS_CHAT:
-            lark.send_text(f"\u2705 {operator_name} acknowledged alert", chat_id=FOUNDERS_CHAT)
+                        lark.send_text(f"\u2705 {operator_name} acknowledged alert", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Acknowledged"}}
     if action_str.startswith("mark_updated_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already updated"}}
+                if _is_action_clicked(action_str):
+                                return {"toast": {"type": "info", "content": "Already updated"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
         assigned_to = action_value.get("assigned_to", "")
         if FOUNDERS_CHAT:
-            lark.send_text(f"\ud83d\udcca {operator_name} updated status for {order_num}", chat_id=FOUNDERS_CHAT)
+                        lark.send_text(f"\ud83d\udcca {operator_name} updated status for {order_num}", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Marked as updated"}}
     if action_str.startswith("comment_resolved_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already resolved"}}
+                if _is_action_clicked(action_str):
+                                return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         return {"toast": {"type": "success", "content": f"Comment resolved by {operator_name}"}}
     return {"toast": {"type": "info", "content": "Unknown action"}}
@@ -725,77 +786,77 @@ def handle_card_callback(body):
 # =========================================================================
 
 def get_user_scope(sender_open_id):
-    if sender_open_id == HANNAH_OPEN_ID:
-        return "hannah"
+        if sender_open_id == HANNAH_OPEN_ID:
+                    return "hannah"
     if sender_open_id == LUCY_OPEN_ID:
-        return "lucy"
+                return "lucy"
     return "brendan"
 
 def extract_question(msg):
-    try:
-        content = json.loads(msg.get("content", "{}"))
-        raw_text = content.get("text", "").strip()
-    except Exception:
-        return None
-    if not raw_text:
-        return None
-    if msg.get("chat_type", "") == "p2p":
-        return raw_text
-    mentions = msg.get("mentions", [])
+        try:
+                    content = json.loads(msg.get("content", "{}"))
+                    raw_text = content.get("text", "").strip()
+except Exception:
+            return None
+        if not raw_text:
+                    return None
+                if msg.get("chat_type", "") == "p2p":
+                            return raw_text
+                        mentions = msg.get("mentions", [])
     bot_mentioned = False
     for mention in mentions:
-        mid = mention.get("id", {})
-        mention_open_id = mid.get("open_id", "")
-        mention_name = mention.get("name", "")
-        if BOT_OPEN_ID and mention_open_id == BOT_OPEN_ID:
-            bot_mentioned = True
-            break
-        if BOT_NAME and BOT_NAME.lower() in mention_name.lower():
-            bot_mentioned = True
-            break
-    if not bot_mentioned:
-        return None
-    clean = re.sub(r'@[^\s]+', '', raw_text).strip()
+                mid = mention.get("id", {})
+                mention_open_id = mid.get("open_id", "")
+                mention_name = mention.get("name", "")
+                if BOT_OPEN_ID and mention_open_id == BOT_OPEN_ID:
+                                bot_mentioned = True
+                                break
+                            if BOT_NAME and BOT_NAME.lower() in mention_name.lower():
+                                            bot_mentioned = True
+                                            break
+                                    if not bot_mentioned:
+                                                return None
+                                            clean = re.sub(r'@[^\s]+', '', raw_text).strip()
     return clean if clean else raw_text
 
 def build_context(projects):
-    lines = [f"Today is {datetime.now(timezone.utc).strftime('%A %B %d %Y')}.", f"Total records: {len(projects)}", ""]
+        lines = [f"Today is {datetime.now(timezone.utc).strftime('%A %B %d %Y')}.", f"Total records: {len(projects)}", ""]
     for p in projects[:200]:
-        tname = p.get("__table_name__", "Unknown")
+                tname = p.get("__table_name__", "Unknown")
         parts = [f"[Board: {tname}]"]
         for key, val in p.items():
-            if key.startswith("__"):
-                continue
-            parts.append(f"{key}: {field_to_text(val)}")
+                        if key.startswith("__"):
+                                            continue
+                                        parts.append(f"{key}: {field_to_text(val)}")
         lines.append(" | ".join(parts))
     return "\n".join(lines)
 
 def _process_message(user_text, chat_id, scope="brendan", sender_id=""):
-    try:
-        projects = fetch_all_projects()
-        if scope != "brendan":
-            projects = [p for p in projects if scope in p.get("__table_name__", "").lower()]
-        chat_hist = _get_conversation(chat_id)
-        _add_to_conversation(chat_id, "user", user_text)
-        context = build_context(projects)
-        system_prompt = "You are IRON BOT, HLT internal assistant powered by Claude. Be conversational and proactive. 'Due Date' = 'In Hand Date'. Timestamps are Unix ms."
-        user_message = f"--- LARK DATA ---\n{context}\n--- END ---\n\nQuestion: {user_text}"
-        response = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=4096, system=system_prompt, messages=(chat_hist or []) + [{"role": "user", "content": user_message}])
-        answer = response.content[0].text.strip()
-        _add_to_conversation(chat_id, "assistant", answer)
-        lark.send_group_message(answer, chat_id=chat_id)
-    except Exception as e:
-        logger.error(f"Process message error: {e}")
-        lark.send_group_message(f"Error: {str(e)[:200]}", chat_id=chat_id)
+        try:
+                    projects = fetch_all_projects()
+                    if scope != "brendan":
+                                    projects = [p for p in projects if scope in p.get("__table_name__", "").lower()]
+                                chat_hist = _get_conversation(chat_id)
+                    _add_to_conversation(chat_id, "user", user_text)
+                    context = build_context(projects)
+                    system_prompt = "You are IRON BOT, HLT internal assistant powered by Claude. Be conversational and proactive. 'Due Date' = 'In Hand Date'. Timestamps are Unix ms."
+                    user_message = f"--- LARK DATA ---\n{context}\n--- END ---\n\nQuestion: {user_text}"
+                    response = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=4096, system=system_prompt, messages=(chat_hist or []) + [{"role": "user", "content": user_message}])
+                    answer = response.content[0].text.strip()
+                    _add_to_conversation(chat_id, "assistant", answer)
+                    lark.send_group_message(answer, chat_id=chat_id)
+except Exception as e:
+            logger.error(f"Process message error: {e}")
+            lark.send_group_message(f"Error: {str(e)[:200]}", chat_id=chat_id)
 
-def _is_already_processed(message_id):
-    now = time.time()
-    expired = [mid for mid, ts in processed_message_ids.items() if now - ts > DEDUP_TTL]
-    for mid in expired:
+    def _is_already_processed(message_id):
+            now = time.time()
+            expired = [mid for mid, ts in processed_message_ids.items() if now - ts > DEDUP_TTL]
+            for mid in expired:
         del processed_message_ids[mid]
     if message_id in processed_message_ids:
-        return True
-    processed_message_ids[message_id] = now
+                return True
+            processed_message_ids[message_id] = now
     return False
 
 # =========================================================================
@@ -804,10 +865,10 @@ def _is_already_processed(message_id):
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    body = request.get_json(silent=True) or {}
-    if body.get("type") == "url_verification":
-        return jsonify({"challenge": body.get("challenge", "")})
-    header = body.get("header", {})
+        body = request.get_json(silent=True) or {}
+        if body.get("type") == "url_verification":
+                    return jsonify({"challenge": body.get("challenge", "")})
+                header = body.get("header", {})
     event_type = header.get("event_type", "")
     event = body.get("event", {})
     msg = event.get("message", {})
@@ -816,108 +877,111 @@ def webhook():
     sender_type = sender.get("sender_type", "")
     logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, sender_type={sender_type}")
     if event_type != "im.message.receive_v1":
-        return jsonify({"code": 0})
-    if msg_type != "text":
-        return jsonify({"code": 0})
-    message_id = msg.get("message_id", "")
+                return jsonify({"code": 0})
+            if msg_type != "text":
+                        return jsonify({"code": 0})
+                    message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
-        return jsonify({"code": 0})
-    user_text = extract_question(msg)
+                return jsonify({"code": 0})
+            user_text = extract_question(msg)
     if not user_text:
-        return jsonify({"code": 0})
-    chat_id = msg.get("chat_id", "")
+                return jsonify({"code": 0})
+            chat_id = msg.get("chat_id", "")
     if not chat_id:
-        return jsonify({"code": 0})
-    sender_open_id = sender.get("sender_id", {}).get("open_id", "")
+                return jsonify({"code": 0})
+            sender_open_id = sender.get("sender_id", {}).get("open_id", "")
     scope = get_user_scope(sender_open_id)
     threading.Thread(target=_process_message, args=(user_text, chat_id, scope, sender_open_id), daemon=True).start()
     return jsonify({"code": 0})
 
 @app.route("/card-callback", methods=["POST"])
 def card_callback():
-    body = request.get_json(silent=True) or {}
+        body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
-        return jsonify({"challenge": body.get("challenge", "")})
-    result = handle_card_callback(body)
+                return jsonify({"challenge": body.get("challenge", "")})
+            result = handle_card_callback(body)
     return jsonify(result)
 
 @app.route("/notify/<table_id>/<record_id>", methods=["POST", "GET"])
 def notify_endpoint(table_id, record_id):
-    result = handle_notify_button(table_id, record_id)
+        result = handle_notify_button(table_id, record_id)
     return jsonify(result)
 
 @app.route("/update-team/<table_id>/<record_id>", methods=["POST", "GET"])
 def update_team_endpoint(table_id, record_id):
-    result = handle_update_team_button(table_id, record_id)
+        result = handle_update_team_button(table_id, record_id)
     return jsonify(result)
 
 @app.route("/status-request/<table_id>/<record_id>", methods=["POST", "GET"])
 def status_request_endpoint(table_id, record_id):
-    result = handle_status_request_button(table_id, record_id)
+        result = handle_status_request_button(table_id, record_id)
     return jsonify(result)
 
 @app.route("/morning-digest", methods=["POST", "GET"])
 def morning_digest():
-    if DIGEST_SECRET:
-        provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
-        if provided != DIGEST_SECRET:
-            return jsonify({"error": "Unauthorized"}), 401
-    chat_id = DIGEST_CHAT
+        if DIGEST_SECRET:
+                    provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+                    if provided != DIGEST_SECRET:
+                                    return jsonify({"error": "Unauthorized"}), 401
+                            chat_id = FOUNDERS_CHAT
     if not chat_id:
-        return jsonify({"error": "No digest channel"}), 500
+                return jsonify({"error": "No founders channel configured"}), 500
     try:
+                global _projects_cache_time
+        _projects_cache_time = 0
         projects = fetch_all_projects()
         if not projects:
-            return jsonify({"error": "No data"}), 500
-        digest = build_morning_digest(projects)
-        card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"Morning Digest - {datetime.now(timezone.utc).strftime('%B %d, %Y')}"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": digest}]}
+                        return jsonify({"error": "No data"}), 500
+                    digest = build_morning_digest(projects)
+        card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83c\udf05 Morning Digest \u2014 {datetime.now(timezone.utc).strftime('%B %d, %Y')}"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": digest}]}
         lark.send_card(card, chat_id=chat_id)
         send_due_date_alerts()
-        return jsonify({"status": "ok"})
-    except Exception as e:
+        return jsonify({"status": "ok", "records": len(projects)})
+except Exception as e:
         logger.error(f"Digest error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/check-comments", methods=["POST", "GET"])
 def check_comments_endpoint():
-    if DIGEST_SECRET:
-        provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+        if DIGEST_SECRET:
+                    provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
-            return jsonify({"error": "Unauthorized"}), 401
-    threading.Thread(target=check_new_comments, daemon=True).start()
+                        return jsonify({"error": "Unauthorized"}), 401
+                threading.Thread(target=check_new_comments, daemon=True).start()
     return jsonify({"status": "started", "message": "Comment check running in background"})
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "3.0"})
+        return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "3.1"})
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v3.0", "features": ["notify", "update-team", "status-request", "digest", "alerts", "ai-chat", "comment-polling"]})
+        return jsonify({"code": 0, "bot": "Iron Bot v3.1", "features": ["notify", "update-team", "status-request", "digest", "alerts", "ai-chat", "comment-polling"]})
 
 # =========================================================================
 # STARTUP
 # =========================================================================
+
 _init_db()
 threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 
 COMMENT_POLL_INTERVAL = int(os.environ.get("COMMENT_POLL_INTERVAL", "300"))  # 5 min default
 
 def _comment_poll_loop():
-    """Background loop that checks for new comments every COMMENT_POLL_INTERVAL seconds."""
+        """Background loop that checks for new comments every COMMENT_POLL_INTERVAL seconds."""
     time.sleep(30)  # Wait 30s after startup before first check
     while True:
-        try:
-            logger.info("Comment poll loop: starting check...")
-            check_new_comments()
-        except Exception as e:
+                try:
+                                logger.info("Comment poll loop: starting check...")
+                                check_new_comments()
+except Exception as e:
             logger.error(f"Comment poll loop error: {e}")
         time.sleep(COMMENT_POLL_INTERVAL)
 
 if URGENT_APPROVALS_CHAT:
-    threading.Thread(target=_comment_poll_loop, daemon=True).start()
+        threading.Thread(target=_comment_poll_loop, daemon=True).start()
     logger.info(f"Comment polling started (interval={COMMENT_POLL_INTERVAL}s)")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+        port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
