@@ -309,7 +309,7 @@ def fetch_all_projects():
             if not table_id or _is_excluded_board(table_name):
                 continue
             try:
-                records = lark.get_table_records(table_id)
+                records = lark.get_table_records(table_id) or []
                 for rec in records:
                     flat = dict(rec.get("fields", {}))
                     flat["__table_name__"] = table_name
@@ -620,7 +620,7 @@ def check_new_comments():
         if not table_id:
             continue
         try:
-            records = lark.get_table_records(table_id)
+            records = lark.get_table_records(table_id) or []
         except Exception as e:
             logger.warning(f"Comment check - records error on {table_name}: {str(e)[:60]}")
             errors += 1
