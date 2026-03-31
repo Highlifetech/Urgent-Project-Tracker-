@@ -2,19 +2,19 @@ name: Iron Bot Morning Digest + Due Date Alerts
 
 on:
   schedule:
-      - cron: '0 13 * * 1-5'  # 8am ET (UTC-5) Mon-Fri
-          - cron: '0 12 * * 1-5'  # 8am ET (UTC-4 daylight saving) Mon-Fri
-            workflow_dispatch:
+    - cron: '0 13 * * 1-5'  # 8am ET (UTC-5) Mon-Fri
+    - cron: '0 12 * * 1-5'  # 8am ET (UTC-4 daylight saving) Mon-Fri
+  workflow_dispatch:
 
-            jobs:
-              morning-digest-and-alerts:
-                  runs-on: ubuntu-latest
-                      steps:
-                            - name: Trigger morning digest + due date alerts
-                                    run: |
-                                              curl -X POST \
-                                                          -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
-                                                                      -H "Content-Type: application/json" \
-                                                                                  --fail-with-body \
-                                                                                              https://web-production-f965d.up.railway.app/morning-digest
-                                                                                                      timeout-minutes: 3
+jobs:
+  morning-digest-and-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning digest + due date alerts
+        run: |
+          curl -X POST \
+            -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --fail-with-body \
+            https://web-production-f965d.up.railway.app/morning-digest
+        timeout-minutes: 3
