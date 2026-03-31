@@ -4,15 +4,12 @@ import json
 import re
 import time
 import threading
-import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 import anthropic
 import psycopg2
 import psycopg2.extras
 from lark_client import LarkClient
-from netsuite_client import NetSuiteClient
-from pipedrive_client import PipedriveClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -23,8 +20,6 @@ BOT_NAME = os.environ.get("BOT_NAME", "Iron Bot")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 from config import (
-    LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK,
-    FIELD_PRODUCTION_DRAWING, ARTWORK_CONFIRMED_STATUS,
     LARK_CHAT_ID_HANNAH, LARK_CHAT_ID_LUCY,
     LARK_BASE_APP_TOKEN, LARK_BASE_RECORD_URL,
     FIELD_ORDER_NUM, FIELD_STATUS, FIELD_DESCRIPTION, FIELD_CLIENT,
@@ -40,12 +35,9 @@ URGENT_APPROVALS_CHAT = os.environ.get("LARK_CHAT_ID_URGENT_APPROVALS", "")
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "")
-CARLO_OPEN_ID = os.environ.get("CARLO_OPEN_ID", "")
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 lark = LarkClient()
-netsuite = NetSuiteClient()
-pipedrive = PipedriveClient()
 
 BOT_OPEN_ID = None
 processed_message_ids = {}
@@ -62,9 +54,15 @@ _memory_history = {}
 # =========================================================================
 
 def record_link(table_id, record_id):
-    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view=vewUkx3tAe&record={record_id}"
+    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view=vewGgswDcu&record={record_id}"
 
 def field_to_text(val):
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (int, float)):
+        return str(val)
     if isinstance(val, list):
         parts = []
         for item in val:
@@ -75,29 +73,31 @@ def field_to_text(val):
         return ", ".join(parts)
     if isinstance(val, dict):
         return val.get("text", val.get("name", str(val)))
-    return str(val) if val is not None else ""
+    return str(val)
 
 def get_assigned_to(fields):
-    raw = fields.get(FIELD_ASSIGNED_TO, "")
-    text = field_to_text(raw).strip().lower()
-    if "hannah" in text:
+    val = fields.get(FIELD_ASSIGNED_TO) or fields.get("Assigned To", "")
+    name = field_to_text(val)
+    if not name or name == "Brendan":
+        return "Brendan"
+    if "hannah" in name.lower():
         return "Hannah"
-    if "lucy" in text:
+    if "lucy" in name.lower():
         return "Lucy"
-    return "Brendan"
+    return name
 
 def get_assigned_from_table(table_name):
-    name = table_name.lower()
-    if "hannah" in name:
+    tname = (table_name or "").lower()
+    if "hannah" in tname:
         return "Hannah"
-    if "lucy" in name:
+    if "lucy" in tname:
         return "Lucy"
     return "Brendan"
 
 def get_image_key_from_field(fields, field_name="Production Artwork"):
-    artwork = fields.get(field_name, [])
-    if isinstance(artwork, list) and artwork:
-        first = artwork[0]
+    val = fields.get(field_name)
+    if isinstance(val, list) and val:
+        first = val[0]
         if isinstance(first, dict):
             return first.get("file_token", first.get("token", ""))
     return ""
@@ -131,12 +131,14 @@ def get_user_name(open_id):
         return "Lucy"
     if open_id == BRENDAN_OPEN_ID:
         return "Brendan"
-    if open_id == CARLO_OPEN_ID:
-        return "Carlo"
-    return "Unknown"
+    try:
+        info = lark._get(f"/open-apis/contact/v3/users/{open_id}", {"user_id_type": "open_id"})
+        return info.get("data", {}).get("user", {}).get("name", open_id[:10])
+    except Exception:
+        return open_id[:10] if open_id else "Unknown"
 
 # =========================================================================
-# DATABASE
+# DATABASE (Postgres for persistent memory + card state)
 # =========================================================================
 
 def _get_db_conn():
@@ -161,8 +163,15 @@ def _init_db():
             cur.execute("""CREATE TABLE IF NOT EXISTS card_actions (
                 id SERIAL PRIMARY KEY, action_id TEXT UNIQUE NOT NULL,
                 clicked_by TEXT DEFAULT '', clicked_at TIMESTAMPTZ DEFAULT NOW())""")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations (chat_id, created_at DESC)")
+            cur.execute("""CREATE TABLE IF NOT EXISTS seen_comments (
+                id SERIAL PRIMARY KEY,
+                comment_id TEXT UNIQUE NOT NULL,
+                table_id TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW())""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations (chat_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_card_act ON card_actions (action_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_seen_cmt ON seen_comments (comment_id)")
         conn.commit()
         conn.close()
         logger.info("DB tables ready")
@@ -208,6 +217,41 @@ def _mark_action_clicked(action_id, clicked_by=""):
             pass
         return False
 
+def _is_comment_seen(comment_id):
+    conn = _get_db_conn()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM seen_comments WHERE comment_id = %s", (comment_id,))
+            result = cur.fetchone()
+        conn.close()
+        return result is not None
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+def _mark_comment_seen(comment_id, table_id, record_id):
+    conn = _get_db_conn()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO seen_comments (comment_id, table_id, record_id) VALUES (%s, %s, %s) ON CONFLICT (comment_id) DO NOTHING", (comment_id, table_id, record_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("Mark comment seen error: " + str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
 def _get_conversation(chat_id):
     conn = _get_db_conn()
     if conn:
@@ -243,10 +287,12 @@ def _add_to_conversation(chat_id, role, content):
                 pass
     if chat_id not in _memory_history:
         _memory_history[chat_id] = []
-    _memory_history[chat_id].append({"role": role, "content": content})
+    _memory_history[chat_id].append({"role": role, "content": content[:8000]})
+    if len(_memory_history[chat_id]) > CONVERSATION_MAX_TURNS * 2:
+        _memory_history[chat_id] = _memory_history[chat_id][-CONVERSATION_MAX_TURNS * 2:]
 
 # =========================================================================
-# DATA FETCHING
+# FETCH ALL PROJECTS (cached)
 # =========================================================================
 
 def fetch_all_projects():
@@ -290,7 +336,7 @@ def _fetch_bot_open_id():
         logger.warning(f"Bot info error: {e}")
 
 # =========================================================================
-# FEATURE 1 - NOTIFY BUTTON
+# FEATURE 1 - NOTIFY CARD (new record notification to Founders)
 # =========================================================================
 
 def build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key=""):
@@ -327,7 +373,7 @@ def handle_notify_button(table_id, record_id):
         return {"status": "error", "detail": str(e)}
 
 # =========================================================================
-# FEATURE 2 - UPDATE TEAM BUTTON
+# FEATURE 2 - UPDATE TEAM CARD
 # =========================================================================
 
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
@@ -341,17 +387,6 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Updated \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
-
-def build_status_request_card(order_num, assigned_to, table_id, record_id, image_key=""):
-    link = record_link(table_id, record_id)
-    action_id = f"mark_updated_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**\ud83d\udcca Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan\n\nPlease provide an update on the production status in the comments and fill in an estimated ship date for Brendan. Please be mindful of the in-hands date and if there is any issue, notify Brendan."}]
-    if image_key:
-        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
-    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
-    update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
-    elements.append({"tag": "action", "actions": [view_btn, update_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "orange"}, "elements": elements}
 
 def handle_update_team_button(table_id, record_id):
     try:
@@ -367,25 +402,40 @@ def handle_update_team_button(table_id, record_id):
                     assigned_to = get_assigned_from_table(t.get("name", ""))
                     break
         card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
-        target = FOUNDERS_CHAT
-        if target:
-            lark.send_card(card, chat_id=target)
-        logger.info(f"Update Team card for {order_num} to {assigned_to}")
-        return {"status": "ok", "order": order_num, "routed_to": assigned_to}
+        if FOUNDERS_CHAT:
+            lark.send_card(card, chat_id=FOUNDERS_CHAT)
+        logger.info(f"Update Team card for {order_num}")
+        return {"status": "ok", "order": order_num}
     except Exception as e:
         logger.error(f"Update Team error: {e}")
         return {"status": "error", "detail": str(e)}
 
+# =========================================================================
+# FEATURE 2b - STATUS REQUEST CARD
+# =========================================================================
+
+def build_status_request_card(order_num, assigned_to, table_id, record_id, image_key=""):
+    link = record_link(table_id, record_id)
+    action_id = f"mark_updated_{table_id}_{record_id}"
+    elements = [{"tag": "markdown", "content": f"**\ud83d\udcca Status Update Requested**\n\n**Sales Order:** {order_num}\n**Requested by:** Brendan"}]
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
+    if _is_action_clicked(action_id):
+        ack_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Updated \u2713"}, "type": "default", "disabled": True}
+    else:
+        ack_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Updated"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+    elements.append({"tag": "action", "actions": [view_btn, ack_btn]})
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcca Status Request \u2014 {order_num}"}, "template": "blue"}, "elements": elements}
 
 def handle_status_request_button(table_id, record_id):
     try:
         record = lark.get_record(table_id, record_id)
         fields = record.get("fields", {})
         order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
-        logger.info(f"Record fields for {table_id}/{record_id}: {list(fields.keys())}")
         if not order_num:
-            for alt_field in ["Sales Order", "Order Number", "SO#", "Order#", "order_num"]:
-                order_num = field_to_text(fields.get(alt_field, ""))
+            for alt in ["Sales Order", "Order Number", "SO#", "Order#"]:
+                order_num = field_to_text(fields.get(alt, ""))
                 if order_num:
                     break
         assigned_to = get_assigned_to(fields)
@@ -401,12 +451,11 @@ def handle_status_request_button(table_id, record_id):
         if target:
             try:
                 lark.send_card(card, chat_id=target)
-            except Exception as card_err:
-                logger.warning(f"Card with image failed, retrying without: {card_err}")
+            except Exception:
                 card = build_status_request_card(order_num, assigned_to, table_id, record_id)
                 lark.send_card(card, chat_id=target)
-        logger.info(f"Status Request card for {order_num} to {assigned_to}")
-        return {"status": "ok", "order": order_num, "assigned_to": assigned_to}
+        logger.info(f"Status Request card for {order_num}")
+        return {"status": "ok", "order": order_num}
     except Exception as e:
         logger.error(f"Status Request error: {e}")
         return {"status": "error", "detail": str(e)}
@@ -439,7 +488,7 @@ def build_morning_digest(projects):
         tname = p.get("__table_name__", "")
         tid = p.get("__table_id__", "")
         rid = p.get("__record_id__", "")
-        link = record_link(tid, rid) if tid and rid else ""
+        link = record_link(tid, rid)
         due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
         due_date = ms_to_date(due_ms)
         if "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
@@ -543,11 +592,82 @@ def _build_alert_card(entries, window, assigned):
         if _is_action_clicked(aid):
             actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledged {e['order']}"}, "type": "default", "disabled": True})
         else:
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Request Update {e['order']}"}, "type": "primary", "value": {"action": aid, "order_num": e["order"], "assigned_to": assigned, "date": e["date"], "status": e["status"]}})
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledge {e['order']}"}, "type": "primary", "value": {"action": aid}})
     elements = [{"tag": "markdown", "content": "\n".join(lines)}]
-    for i in range(0, len(actions), 3):
-        elements.append({"tag": "action", "actions": actions[i:i+3]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": title}, "template": color}, "elements": elements}
+    if actions:
+        elements.append({"tag": "action", "actions": actions[:4]})
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} - {assigned}"}, "template": color}, "elements": elements}
+
+# =========================================================================
+# FEATURE 5 - COMMENT POLLING (check for new Bitable record comments)
+# =========================================================================
+
+def check_new_comments():
+    """Poll all tables for new comments and forward to Urgent Approvals chat."""
+    if not URGENT_APPROVALS_CHAT:
+        logger.warning("No URGENT_APPROVALS_CHAT set, skipping comment check")
+        return {"status": "skipped", "reason": "no_chat_id"}
+    try:
+        tables = lark.get_all_tables()
+    except Exception as e:
+        logger.error(f"Comment check - tables fetch error: {e}")
+        return {"status": "error", "detail": str(e)}
+    new_count = 0
+    errors = 0
+    for table in tables:
+        table_id = table.get("table_id", "")
+        table_name = table.get("name", "")
+        if not table_id:
+            continue
+        try:
+            records = lark.get_table_records(table_id)
+        except Exception as e:
+            logger.warning(f"Comment check - records error on {table_name}: {str(e)[:60]}")
+            errors += 1
+            continue
+        for rec in records:
+            record_id = rec.get("record_id", "")
+            if not record_id:
+                continue
+            try:
+                comments = lark.get_record_comments(table_id, record_id)
+            except Exception:
+                continue
+            if not comments:
+                continue
+            fields = rec.get("fields", {})
+            order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+            for comment in comments:
+                cid = comment.get("comment_id", "")
+                if not cid or _is_comment_seen(cid):
+                    continue
+                _mark_comment_seen(cid, table_id, record_id)
+                user_name = comment.get("user_name", "Unknown")
+                content = comment.get("content", "")
+                link = record_link(table_id, record_id)
+                action_id = f"comment_resolved_{table_id}_{record_id}_{cid}"
+                card = _build_comment_card(order_num, table_name, user_name, content, link, action_id)
+                try:
+                    lark.send_card(card, chat_id=URGENT_APPROVALS_CHAT)
+                    new_count += 1
+                except Exception as e:
+                    logger.error(f"Comment card send error: {e}")
+                    errors += 1
+    logger.info(f"Comment check done: {new_count} new, {errors} errors")
+    return {"status": "ok", "new_comments": new_count, "errors": errors}
+
+def _build_comment_card(order_num, table_name, user_name, content, link, action_id):
+    display_order = order_num or "Unknown Record"
+    elements = [
+        {"tag": "markdown", "content": f"**From:** {user_name}\n**Record:** {display_order}\n**Board:** {table_name}\n\n{content[:500]}"},
+    ]
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udd17 View Record"}, "type": "default", "url": link}
+    if _is_action_clicked(action_id):
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+    else:
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id}}
+    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcac Comment: {display_order}"}, "template": "turquoise"}, "elements": elements}
 
 # =========================================================================
 # CARD CALLBACK HANDLER
@@ -573,21 +693,16 @@ def handle_card_callback(body):
             return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as resolved - {now_str}"}]}
+        assigned_to = action_value.get("assigned_to", "")
         if FOUNDERS_CHAT:
-            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
-        return {"toast": {"type": "success", "content": "Marked resolved"}}
+            lark.send_text(f"\u2705 {operator_name} resolved {order_num} (assigned to {assigned_to})", chat_id=FOUNDERS_CHAT)
+        return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
     if action_str.startswith("ack_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already acknowledged"}}
         _mark_action_clicked(action_str, operator_name)
-        order_num = action_value.get("order_num", "")
-        date_str = action_value.get("date", "")
-        status = action_value.get("status", "")
-        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "Update Acknowledged"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** acknowledged **{order_num}** - In-Hand: {date_str} - Status: {status}"}]}
         if FOUNDERS_CHAT:
-            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
+            lark.send_text(f"\u2705 {operator_name} acknowledged alert", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Acknowledged"}}
     if action_str.startswith("mark_updated_"):
         if _is_action_clicked(action_str):
@@ -595,55 +710,18 @@ def handle_card_callback(body):
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
         assigned_to = action_value.get("assigned_to", "")
-        table_id = action_value.get("table_id", "")
-        record_id = action_value.get("record_id", "")
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        link = record_link(table_id, record_id) if table_id and record_id else ""
-        respond_action_id = f"brendan_responded_{table_id}_{record_id}"
-        view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link} if link else None
-        respond_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Reviewed"}, "type": "primary", "value": {"action": respond_action_id, "order_num": order_num, "assigned_to": assigned_to}}
-        confirm_elements = [{"tag": "markdown", "content": f"**{operator_name}** commented on **{order_num}**, please review and respond."}]
-        action_buttons = [b for b in [view_btn, respond_btn] if b]
-        if action_buttons:
-            confirm_elements.append({"tag": "action", "actions": action_buttons})
-        confirm = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Update Received \u2014 {order_num}"}, "template": "green"}, "elements": confirm_elements}
         if FOUNDERS_CHAT:
-            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=FOUNDERS_CHAT), daemon=True).start()
+            lark.send_text(f"\ud83d\udcca {operator_name} updated status for {order_num}", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Marked as updated"}}
-
     if action_str.startswith("comment_resolved_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
-        commenter = action_value.get("commenter", "")
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        confirm = {
-            "config": {"wide_screen_mode": True},
-            "header": {"title": {"tag": "plain_text", "content": "\u2705 Comment Resolved"}, "template": "green"},
-            "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved comment from **{commenter}** - {now_str}"}],
-        }
-        target = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
-        if target:
-            threading.Thread(target=lambda: lark.send_card(confirm, chat_id=target), daemon=True).start()
-        return {"toast": {"type": "success", "content": "Marked as resolved"}}
-
-    if action_str.startswith("brendan_responded_"):
-        if _is_action_clicked(action_str):
-            return {"toast": {"type": "info", "content": "Already responded"}}
-        _mark_action_clicked(action_str, operator_name)
-        order_num = action_value.get("order_num", "")
-        assigned_to = action_value.get("assigned_to", "")
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        notify = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u2705 Brendan Reviewed \u2014 {order_num}"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**Brendan** sent an update on **{order_num}** - {now_str}"}]}
-        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
-        if target:
-            threading.Thread(target=lambda: lark.send_card(notify, chat_id=target), daemon=True).start()
-        return {"toast": {"type": "success", "content": f"{assigned_to} notified"}}
-
-    return {"toast": {"type": "info", "content": "Processed"}}
+        return {"toast": {"type": "success", "content": f"Comment resolved by {operator_name}"}}
+    return {"toast": {"type": "info", "content": "Unknown action"}}
 
 # =========================================================================
-# BOT CHAT Q&A
+# AI CHAT (Claude-powered Q&A about projects)
 # =========================================================================
 
 def get_user_scope(sender_open_id):
@@ -729,39 +807,16 @@ def webhook():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
-    # --- Debug: log all incoming events ---
     header = body.get("header", {})
     event_type = header.get("event_type", "")
     event = body.get("event", {})
     msg = event.get("message", {})
-    chat_id = msg.get("chat_id", "")
     msg_type = msg.get("message_type", "")
     sender = event.get("sender", {})
     sender_type = sender.get("sender_type", "")
-    logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, chat_id={chat_id}, sender_type={sender_type}")
-
-    # Store event for debugging
-    _recent_events.append({"time": datetime.now(timezone.utc).isoformat(), "event_type": event_type, "msg_type": msg_type, "chat_id": chat_id[:20] if chat_id else "", "sender_type": sender_type, "keys": list(event.keys()) if isinstance(event, dict) else []})
-    if len(_recent_events) > MAX_RECENT_EVENTS:
-        _recent_events.pop(0)
-
-    # --- Handle comment events (drive.notice.comment_add_v1) ---
-    # These events fire when comments are added to docs/base records the bot has access to
-    COMMENT_EVENT_TYPES = [
-        "drive.notice.comment_add_v1",
-        "drive.file.comment_created_v1",
-        "drive.file.comment_replied_v1",
-        "drive.file.comment_mentioned_v1",
-    ]
-    if event_type in COMMENT_EVENT_TYPES or ("comment" in event_type.lower() and "approval" not in event_type.lower() and "moments" not in event_type.lower() and "task" not in event_type.lower()):
-        logger.info(f"Comment event received: type={event_type}")
-        logger.info(f"Comment event payload: {json.dumps(body, default=str)[:2000]}")
-        try:
-            _forward_comment_to_founders(event_type, event, body)
-        except Exception as e:
-            logger.error(f"Error forwarding comment event: {e}")
+    logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, sender_type={sender_type}")
+    if event_type != "im.message.receive_v1":
         return jsonify({"code": 0})
-
     if msg_type != "text":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
@@ -773,7 +828,6 @@ def webhook():
     chat_id = msg.get("chat_id", "")
     if not chat_id:
         return jsonify({"code": 0})
-    sender = event.get("sender", {})
     sender_open_id = sender.get("sender_id", {}).get("open_id", "")
     scope = get_user_scope(sender_open_id)
     threading.Thread(target=_process_message, args=(user_text, chat_id, scope, sender_open_id), daemon=True).start()
@@ -784,36 +838,23 @@ def card_callback():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
-    return jsonify(handle_card_callback(body))
+    result = handle_card_callback(body)
+    return jsonify(result)
 
-@app.route("/notify", methods=["POST"])
-def notify_endpoint():
-    body = request.get_json(silent=True) or {}
-    table_id = body.get("table_id", "")
-    record_id = body.get("record_id", "")
-    if not table_id or not record_id:
-        return jsonify({"error": "table_id and record_id required"}), 400
-    return jsonify(handle_notify_button(table_id, record_id))
+@app.route("/notify/<table_id>/<record_id>", methods=["POST", "GET"])
+def notify_endpoint(table_id, record_id):
+    result = handle_notify_button(table_id, record_id)
+    return jsonify(result)
 
-@app.route("/update-team", methods=["POST"])
-def update_team_endpoint():
-    body = request.get_json(silent=True) or {}
-    table_id = body.get("table_id", "")
-    record_id = body.get("record_id", "")
-    if not table_id or not record_id:
-        return jsonify({"error": "table_id and record_id required"}), 400
-    return jsonify(handle_update_team_button(table_id, record_id))
+@app.route("/update-team/<table_id>/<record_id>", methods=["POST", "GET"])
+def update_team_endpoint(table_id, record_id):
+    result = handle_update_team_button(table_id, record_id)
+    return jsonify(result)
 
-
-@app.route("/status-request", methods=["POST"])
-def status_request_endpoint():
-    body = request.get_json(silent=True) or {}
-    table_id = body.get("table_id", "")
-    record_id = body.get("record_id", "")
-    if not table_id or not record_id:
-        return jsonify({"error": "table_id and record_id required"}), 400
-    return jsonify(handle_status_request_button(table_id, record_id))
-
+@app.route("/status-request/<table_id>/<record_id>", methods=["POST", "GET"])
+def status_request_endpoint(table_id, record_id):
+    result = handle_status_request_button(table_id, record_id)
+    return jsonify(result)
 
 @app.route("/morning-digest", methods=["POST", "GET"])
 def morning_digest():
@@ -832,309 +873,27 @@ def morning_digest():
         card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"Morning Digest - {datetime.now(timezone.utc).strftime('%B %d, %Y')}"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": digest}]}
         lark.send_card(card, chat_id=chat_id)
         send_due_date_alerts()
-        return jsonify({"status": "ok", "length": len(digest)})
+        return jsonify({"status": "ok"})
     except Exception as e:
         logger.error(f"Digest error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/event", methods=["POST"])
-def event_subscription():
-    body = request.get_json(silent=True) or {}
-    # Handle URL verification challenge
-    if body.get("type") == "url_verification":
-        return jsonify({"challenge": body.get("challenge", "")})
-
-    # Handle event callback (v2 schema)
-    header = body.get("header", {})
-    event = body.get("event", {})
-    event_type = header.get("event_type", "")
-
-    logger.info(f"Event endpoint received: type={event_type}")
-    logger.info(f"Event endpoint payload: {json.dumps(body, default=str)[:2000]}")
-
-    # Route comment events to the handler
-    COMMENT_EVENT_TYPES = [
-        "drive.notice.comment_add_v1",
-        "drive.file.comment_created_v1",
-        "drive.file.comment_replied_v1",
-        "drive.file.comment_mentioned_v1",
-    ]
-    if event_type in COMMENT_EVENT_TYPES or ("comment" in event_type.lower() and "approval" not in event_type.lower() and "moments" not in event_type.lower() and "task" not in event_type.lower()):
-        try:
-            _forward_comment_to_founders(event_type, event, body)
-        except Exception as e:
-            logger.error(f"Error forwarding comment event: {e}")
-        return jsonify({"code": 0})
-
-    return jsonify({"code": 0})
-
-
-def _forward_comment_to_founders(event_type, event, full_body):
-    """Extract comment details from drive.notice.comment_add_v1 or similar events
-    and send a card to the Urgent Approvals channel.
-    
-    Card includes:
-    - Who commented and the comment text
-    - View Record button (links to the Lark Base record)
-    - Mark as Resolved button (updates the card when clicked)
-    """
-    target_chat = URGENT_APPROVALS_CHAT or FOUNDERS_CHAT
-    if not target_chat:
-        logger.warning("No urgent approvals/founders chat configured; skipping comment forward")
-        return
-
-    # Log full event for debugging
-    logger.info(f"Processing comment event: {event_type}")
-    logger.info(f"Event keys: {list(event.keys()) if isinstance(event, dict) else type(event)}")
-
-    # --- Extract commenter info ---
-    commenter_name = "Someone"
-    commenter_open_id = ""
-    
-    # Try various payload formats
-    # Format 1: drive.notice.comment_add_v1
-    user_id_info = event.get("user_id", {})
-    if isinstance(user_id_info, dict):
-        commenter_open_id = user_id_info.get("open_id", "") or user_id_info.get("user_id", "")
-    
-    # Format 2: direct user fields
-    if not commenter_open_id:
-        commenter_open_id = event.get("operator_id", {}).get("open_id", "") if isinstance(event.get("operator_id"), dict) else ""
-    if not commenter_open_id:
-        commenter_open_id = event.get("user_id", "") if isinstance(event.get("user_id"), str) else ""
-    
-    if commenter_open_id:
-        commenter_name = get_user_name(commenter_open_id)
-        if commenter_name == "Unknown":
-            # Try to get name from Lark API
-            try:
-                if hasattr(lark, 'get_user_info'):
-                    user_info = lark.get_user_info(commenter_open_id)
-                    commenter_name = user_info.get("name", commenter_open_id)
-                else:
-                    commenter_name = commenter_open_id
-            except Exception:
-                commenter_name = commenter_open_id
-
-    # --- Extract comment content ---
-    comment_text = ""
-    
-    # Try comment.reply_list.replies (standard Drive comment format)
-    comment = event.get("comment", {})
-    if isinstance(comment, dict):
-        reply_list = comment.get("reply_list", {}).get("replies", [])
-        if reply_list:
-            last_reply = reply_list[-1]
-            # Reply content can be nested
-            reply_content = last_reply.get("content", {})
-            if isinstance(reply_content, dict):
-                comment_text = reply_content.get("text", "")
-            elif isinstance(reply_content, str):
-                comment_text = reply_content
-        if not comment_text:
-            content_obj = comment.get("content", {})
-            if isinstance(content_obj, dict):
-                comment_text = content_obj.get("text", "")
-            elif isinstance(content_obj, str):
-                comment_text = content_obj
-
-    # Try direct content field
-    if not comment_text:
-        content_obj = event.get("content", {})
-        if isinstance(content_obj, dict):
-            comment_text = content_obj.get("text", "")
-        elif isinstance(content_obj, str):
-            comment_text = content_obj
-
-    # Try comment_text directly
-    if not comment_text:
-        comment_text = event.get("comment_text", "")
-
-    # --- Extract file/record info ---
-    file_token = event.get("file_token", "") or event.get("file_key", "")
-    file_type = event.get("file_type", "")
-    file_name = event.get("file_name", "") or event.get("title", "")
-    record_id = event.get("record_id", "")
-    table_id = event.get("table_id", "")
-    comment_id = ""
-    
-    # Check for comment_id
-    if isinstance(comment, dict):
-        comment_id = comment.get("comment_id", "")
-
-    # Try context object
-    if not table_id:
-        context = event.get("context", {})
-        if isinstance(context, dict):
-            table_id = context.get("table_id", "")
-            if not record_id:
-                record_id = context.get("record_id", "")
-
-    # Check if this is a Base (bitable) comment by file_type or file_token
-    is_base_comment = file_type == "bitable" or (file_token and file_token == LARK_BASE_APP_TOKEN)
-
-    logger.info(f"Comment details: commenter={commenter_name}, file_token={file_token}, file_type={file_type}, table_id={table_id}, record_id={record_id}, comment_text={comment_text[:100] if comment_text else 'empty'}")
-
-    # --- Build record link ---
-    link = ""
-    if table_id and record_id:
-        link = record_link(table_id, record_id)
-    elif file_token and file_token == LARK_BASE_APP_TOKEN:
-        # It's our Base but we don't know the table/record, link to the Base
-        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}"
-    elif record_id:
-        link = f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?record={record_id}"
-    elif file_token:
-        # Try to link to the file
-        link = f"https://ojpglhhzxlvc.jp.larksuite.com/base/{file_token}"
-
-    # --- Build the card ---
-    action_id = f"comment_resolved_{record_id or file_token or 'unknown'}_{int(time.time())}"
-
-    body_text = f"**{commenter_name}** added a comment"
-    if file_name:
-        body_text += f" in **{file_name}**"
-    if record_id:
-        body_text += f" (Record: {record_id})"
-    
-    elements = [{"tag": "markdown", "content": body_text}]
-    
-    if comment_text:
-        # Clean up comment text - remove @mentions markup if present
-        clean_text = re.sub(r'<at [^>]*>([^<]*)</at>', r'@\1', comment_text)
-        elements.append({"tag": "markdown", "content": f"> {clean_text[:500]}"})
-
-    # Action buttons: View Record + Mark as Resolved
-    buttons = []
-    if link:
-        buttons.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "ð View Record"},
-            "type": "default",
-            "url": link,
-        })
-    if _is_action_clicked(action_id):
-        buttons.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Resolved â"},
-            "type": "default",
-            "disabled": True,
-        })
-    else:
-        buttons.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "â Mark as Resolved"},
-            "type": "primary",
-            "value": {"action": action_id, "commenter": commenter_name, "record": record_id},
-        })
-    if buttons:
-        elements.append({"tag": "action", "actions": buttons})
-
-    card = {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": f"ð¬ New Comment â {commenter_name}"},
-            "template": "orange",
-        },
-        "elements": elements,
-    }
-
-    lark.send_card(card, chat_id=target_chat)
-    logger.info(f"Comment event forwarded to Urgent Approvals: {event_type} by {commenter_name}")
-
-# Store last N events for debugging
-_recent_events = []
-MAX_RECENT_EVENTS = 50
-
-@app.route("/debug-events", methods=["GET"])
-def debug_events():
-    return jsonify({"events": _recent_events, "count": len(_recent_events)})
-
-@app.route("/test-comments/<table_id>/<record_id>", methods=["GET"])
-def test_comments(table_id, record_id):
-    """Try undocumented Bitable comment APIs to see which one works."""
-    results = {}
-    token = lark.get_tenant_token()
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    base_url = "https://open.larksuite.com/open-apis"
-    app_token = LARK_BASE_APP_TOKEN
-
-    # Attempt 1: bitable/v1/apps/{app}/tables/{table}/records/{record}/comments
-    url1 = f"{base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}/comments"
-    try:
-        r1 = requests.get(url1, headers=headers, timeout=10)
-        results["attempt1_bitable_record_comments"] = {"status": r1.status_code, "body": r1.json() if r1.status_code < 500 else r1.text[:500]}
-    except Exception as e:
-        results["attempt1_bitable_record_comments"] = {"error": str(e)}
-
-    # Attempt 2: bitable/v1/apps/{app}/tables/{table}/records/{record}/comments/list
-    url2 = f"{base_url}/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}/comments/list"
-    try:
-        r2 = requests.get(url2, headers=headers, timeout=10)
-        results["attempt2_comments_list"] = {"status": r2.status_code, "body": r2.json() if r2.status_code < 500 else r2.text[:500]}
-    except Exception as e:
-        results["attempt2_comments_list"] = {"error": str(e)}
-
-    # Attempt 3: drive/v1/files/{app_token}/comments?file_type=bitable
-    url3 = f"{base_url}/drive/v1/files/{app_token}/comments?file_type=bitable"
-    try:
-        r3 = requests.get(url3, headers=headers, timeout=10)
-        results["attempt3_drive_bitable"] = {"status": r3.status_code, "body": r3.json() if r3.status_code < 500 else r3.text[:500]}
-    except Exception as e:
-        results["attempt3_drive_bitable"] = {"error": str(e)}
-
-    # Attempt 4: drive/v1/files/{app_token}/comments (no file_type)
-    url4 = f"{base_url}/drive/v1/files/{app_token}/comments"
-    try:
-        r4 = requests.get(url4, headers=headers, timeout=10)
-        results["attempt4_drive_no_type"] = {"status": r4.status_code, "body": r4.json() if r4.status_code < 500 else r4.text[:500]}
-    except Exception as e:
-        results["attempt4_drive_no_type"] = {"error": str(e)}
-
-    return jsonify(results)
+@app.route("/check-comments", methods=["POST", "GET"])
+def check_comments_endpoint():
+    if DIGEST_SECRET:
+        provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+        if provided != DIGEST_SECRET:
+            return jsonify({"error": "Unauthorized"}), 401
+    result = check_new_comments()
+    return jsonify(result)
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot_open_id": BOT_OPEN_ID, "version": "2.0"})
-
-@app.route("/debug", methods=["GET"])
-def debug():
-    return jsonify({"version": "2.0", "claude_ready": bool(ANTHROPIC_API_KEY), "founders_chat": bool(FOUNDERS_CHAT), "hannah_chat": bool(LARK_CHAT_ID_HANNAH), "lucy_chat": bool(LARK_CHAT_ID_LUCY), "bot_open_id": BOT_OPEN_ID, "features": ["notify", "update_team", "status_request", "morning_digest", "due_date_alerts"]})
-
-@app.route("/test-notify/<table_id>/<record_id>", methods=["GET"])
-def test_notify(table_id, record_id):
-    return jsonify(handle_notify_button(table_id, record_id))
-
-@app.route("/test-update-team/<table_id>/<record_id>", methods=["GET"])
-def test_update_team(table_id, record_id):
-    return jsonify(handle_update_team_button(table_id, record_id))
-
-@app.route("/test-status-request/<table_id>/<record_id>", methods=["GET"])
-def test_status_request(table_id, record_id):
-    return jsonify(handle_status_request_button(table_id, record_id))
-
-@app.route("/test-alerts", methods=["GET"])
-def test_alerts():
-    try:
-        send_due_date_alerts()
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/list-chats", methods=["GET"])
-def list_chats():
-    try:
-        chats = lark.list_chats()
-        result = []
-        for c in chats:
-            result.append({"chat_id": c.get("chat_id", ""), "name": c.get("name", ""), "owner_id": c.get("owner_id", "")})
-        return jsonify({"chats": result})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "3.0"})
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v2.0", "features": 4})
+    return jsonify({"code": 0, "bot": "Iron Bot v3.0", "features": ["notify", "update-team", "status-request", "digest", "alerts", "ai-chat", "comment-polling"]})
 
 # =========================================================================
 # STARTUP
@@ -1145,5 +904,3 @@ threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-
