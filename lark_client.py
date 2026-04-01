@@ -436,12 +436,12 @@ class LarkClient:
         return self._delete(f"/open-apis/bitable/v1/apps/{token}/tables/{table_id}")
 
     def get_all_records(self, app_token, table_id, view_id=None):
-                params = {"view_id": view_id} if view_id else None
-              return self._paginate(f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records", params=params)
+        params = {"view_id": view_id} if view_id else None
+        return self._paginate(f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records", params=params)
 
-        def get_table_records(self, table_id, app_token=None, view_id=None):
+    def get_table_records(self, table_id, app_token=None, view_id=None):
         token = app_token or LARK_BASE_APP_TOKEN
-                return self.get_all_records(token, table_id, view_id=view_id)
+        return self.get_all_records(token, table_id, view_id=view_id)
 
     def search_records(self, table_id, filter_expr=None, sort=None, app_token=None):
         token = app_token or LARK_BASE_APP_TOKEN
