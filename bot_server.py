@@ -24,6 +24,7 @@ from config import (
     LARK_BASE_APP_TOKEN, LARK_BASE_RECORD_URL,
     FIELD_ORDER_NUM, FIELD_STATUS, FIELD_DESCRIPTION, FIELD_CLIENT,
     FIELD_DUE_DATE, FIELD_PRODUCTION_ARTWORK, FIELD_ASSIGNED_TO,
+    FIELD_CLIENT_EMAIL,
     SKIP_STATUSES, DIGEST_EXCLUDED_BOARDS,
     LARK_CHAT_ID_DIGEST, DIGEST_SECRET,
     ALL_ORDERS_VIEW_KEYWORD,
@@ -375,9 +376,10 @@ def handle_notify_button(table_id, record_id):
             assigned_to = get_assigned_from_table("")
         image_key = get_image_key_from_field(fields)
         card = build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key)
-        if FOUNDERS_CHAT:
-            lark.send_card(card, chat_id=FOUNDERS_CHAT)
-            logger.info(f"Notify card sent for {order_num}")
+        target = UPDATES_CHAT or FOUNDERS_CHAT
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info(f"Notify card sent to Updates/Approval channel for {order_num}")
         return {"status": "ok", "order": order_num}
     except Exception as e:
         logger.error(f"Notify error: {e}")
@@ -413,9 +415,10 @@ def handle_update_team_button(table_id, record_id):
                     assigned_to = get_assigned_from_table(t.get("name", ""))
                     break
         card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
-        if FOUNDERS_CHAT:
-            lark.send_card(card, chat_id=FOUNDERS_CHAT)
-        logger.info(f"Update Team card for {order_num}")
+        target = LARK_CHAT_ID_HANNAH if assigned_to == "Hannah" else (LARK_CHAT_ID_LUCY if assigned_to == "Lucy" else FOUNDERS_CHAT)
+        if target:
+            lark.send_card(card, chat_id=target)
+        logger.info(f"Update Team card for {order_num} sent to {assigned_to} channel")
         return {"status": "ok", "order": order_num}
     except Exception as e:
         logger.error(f"Update Team error: {e}")
@@ -471,6 +474,93 @@ def handle_status_request_button(table_id, record_id):
         logger.error(f"Status Request error: {e}")
         return {"status": "error", "detail": str(e)}
 
+
+# =========================================================================
+# FEATURE 2c - SEND ARTWORK TO CLIENT EMAIL
+# =========================================================================
+
+def build_send_artwork_card(order_num, client, client_email, assigned_to, table_id, record_id, image_key=""):
+    link = record_link(table_id, record_id)
+    action_id = f"artwork_sent_{table_id}_{record_id}"
+
+    elements = [
+        {"tag": "markdown", "content": f"**Sales Order:** {order_num}\\n**Client:** {client}\\n**Email:** {client_email}\\n**Sent by:** {assigned_to}"}
+    ]
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+
+    if _is_action_clicked(action_id):
+        elements.append({"tag": "action", "actions": [
+            {"tag": "button", "text": {"tag": "plain_text", "content": "Sent \u2713"}, "type": "default", "disabled": True}
+        ]})
+    else:
+        elements.append({"tag": "action", "actions": [
+            {"tag": "button", "text": {"tag": "plain_text", "content": "\u2709\ufe0f Mark as Sent"}, "type": "primary", "value": {"action": action_id, "order_num": order_num}},
+            {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
+        ]})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": f"\ud83c\udfa8 Send Artwork \u2014 {order_num}"}, "template": "green"},
+        "elements": elements
+    }
+
+def handle_send_artwork_button(table_id, record_id):
+    try:
+        record = lark.get_record(table_id, record_id)
+        fields = record.get("fields", {})
+        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+        client = field_to_text(fields.get(FIELD_CLIENT, ""))
+        client_email = field_to_text(fields.get(FIELD_CLIENT_EMAIL, ""))
+        assigned_to = get_assigned_to(fields)
+        if assigned_to == "Brendan":
+            tables = lark.get_all_tables()
+            for t in tables:
+                if t.get("table_id") == table_id:
+                    assigned_to = get_assigned_from_table(t.get("name", ""))
+                    break
+        image_key = get_image_key_from_field(fields)
+
+        if not client_email:
+            logger.warning(f"No client email found for {order_num}")
+            return {"status": "error", "detail": f"No client email found for {order_num}"}
+
+        # Build artwork email body
+        subject = f"Artwork for Review - {order_num} | HLT"
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2>Artwork for Review</h2>
+            <p>Hi {client},</p>
+            <p>Please find the artwork for your order <strong>{order_num}</strong> ready for review.</p>
+            <p>Please review and confirm the artwork at your earliest convenience.</p>
+            <p>If you have any changes or feedback, please let us know.</p>
+            <br>
+            <p>Best regards,<br>HLT Team</p>
+        </div>
+        """
+
+        # Send email to client via Lark mail API
+        try:
+            lark.send_email(client_email, subject, body_html)
+            logger.info(f"Artwork email sent to {client_email} for {order_num}")
+        except Exception as mail_err:
+            logger.error(f"Email send error: {mail_err}")
+            return {"status": "error", "detail": f"Failed to send email: {str(mail_err)}"}
+
+        # Send confirmation card to Updates/Approval channel
+        card = build_send_artwork_card(order_num, client, client_email, assigned_to, table_id, record_id, image_key)
+        confirm_target = UPDATES_CHAT or FOUNDERS_CHAT
+        if confirm_target:
+            try:
+                lark.send_card(card, chat_id=confirm_target)
+            except Exception:
+                card = build_send_artwork_card(order_num, client, client_email, assigned_to, table_id, record_id)
+                lark.send_card(card, chat_id=confirm_target)
+
+        return {"status": "ok", "order": order_num, "email": client_email}
+    except Exception as e:
+        logger.error(f"Send Artwork error: {e}")
+        return {"status": "error", "detail": str(e)}
 # =========================================================================
 # FEATURE 3 - MORNING DIGEST (Founders Channel)
 # =========================================================================
@@ -774,6 +864,15 @@ def handle_card_callback(body):
         if FOUNDERS_CHAT:
             lark.send_text(f"\ud83d\udcca {operator_name} updated status for {order_num}", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Marked as updated"}}
+    if action_str.startswith("artwork_sent_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already marked as sent"}}
+        _mark_action_clicked(action_str, operator_name)
+        order_num = action_value.get("order_num", "")
+        if FOUNDERS_CHAT:
+            lark.send_text(f"\ud83c\udfa8 {operator_name} sent artwork for {order_num}", chat_id=FOUNDERS_CHAT)
+        return {"toast": {"type": "success", "content": f"Artwork sent by {operator_name}"}}
+
     if action_str.startswith("comment_resolved_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already resolved"}}
@@ -917,6 +1016,11 @@ def status_request_endpoint(table_id, record_id):
     result = handle_status_request_button(table_id, record_id)
     return jsonify(result)
 
+@app.route("/send-artwork/<table_id>/<record_id>", methods=["POST", "GET"])
+def send_artwork_endpoint(table_id, record_id):
+    result = handle_send_artwork_button(table_id, record_id)
+    return jsonify(result)
+
 @app.route("/morning-digest", methods=["POST", "GET"])
 def morning_digest():
     if DIGEST_SECRET:
@@ -956,7 +1060,7 @@ def health():
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v3.1", "features": ["notify", "update-team", "status-request", "digest", "alerts", "ai-chat", "comment-polling"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v3.1", "features": ["notify", "update-team", "status-request", "send-artwork", "digest", "alerts", "ai-chat", "comment-polling"]})
 
 # =========================================================================
 # STARTUP
