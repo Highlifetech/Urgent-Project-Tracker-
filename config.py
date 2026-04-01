@@ -89,6 +89,7 @@ FIELD_PRODUCTION_DRAWING = "Production Drawing"
 FIELD_CLIENT = "Client"
 FIELD_ASSIGNED_TO = "Assigned To"
 FIELD_PRODUCTION_ARTWORK = "Production Artwork"
+FIELD_CLIENT_EMAIL = "Client Email"
 FIELD_VENDOR = "Vendor"
 ARTWORK_CONFIRMED_STATUS = "Artwork Confirmed"
 
