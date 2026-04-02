@@ -18,3 +18,13 @@ jobs:
             --fail-with-body \
             https://web-production-f965d.up.railway.app/morning-digest
         timeout-minutes: 3
+
+      - name: Trigger comment check
+        run: |
+          curl -X POST \
+            -H "X-Digest-Secret: ${{ secrets.DIGEST_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --fail-with-body \
+            https://web-production-f965d.up.railway.app/check-comments
+        timeout-minutes: 2
+
