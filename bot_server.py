@@ -574,7 +574,7 @@ def build_morning_digest(projects):
     for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
         su = st.upper()
         if su in ("QUOTE NEEDED", "IN PRODUCTION", "PART SHIPPED", "SHIPPED"):
-            emoji = "\ud83d\udfe6"
+            emoji = "\ud83d\udd35"
         elif su in ("QUOTED", "PART CONFIRMED"):
             emoji = "\ud83d\udfe2"
         elif su in ("PENDING ARTWORK", "ARTWORK CONFIRMED"):
