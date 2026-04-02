@@ -573,20 +573,20 @@ def build_morning_digest(projects):
     s = [f"**\ud83d\udcca Project Overview** | Active Projects: **{total_active}**"]
     for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
         su = st.upper()
-            if su in ("QUOTE NEEDED", "IN PRODUCTION", "PART SHIPPED", "SHIPPED"):
-                emoji = "🟦"
-            elif su in ("QUOTED", "PART CONFIRMED"):
-                emoji = "🟢"
-            elif su in ("PENDING ARTWORK", "ARTWORK CONFIRMED"):
-                emoji = "🟠"
-            elif su == "ON HOLD":
-                emoji = "🟡"
-            elif su in ("NEEDS REVISION", "NEEDS RESOLUTION"):
-                emoji = "🟣"
-            elif su == "CANCELLED":
-                emoji = "🔴"
-            else:
-                emoji = "⚪"
+        if su in ("QUOTE NEEDED", "IN PRODUCTION", "PART SHIPPED", "SHIPPED"):
+            emoji = "\ud83d\udfe6"
+        elif su in ("QUOTED", "PART CONFIRMED"):
+            emoji = "\ud83d\udfe2"
+        elif su in ("PENDING ARTWORK", "ARTWORK CONFIRMED"):
+            emoji = "\ud83d\udfe0"
+        elif su == "ON HOLD":
+            emoji = "\ud83d\udfe1"
+        elif su in ("NEEDS REVISION", "NEEDS RESOLUTION"):
+            emoji = "\ud83d\udfe3"
+        elif su == "CANCELLED":
+            emoji = "\ud83d\udd34"
+        else:
+            emoji = "\u26aa"
         s.append(f"  {emoji} {st}: **{c}**")
 
     s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
