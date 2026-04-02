@@ -547,8 +547,8 @@ def build_morning_digest(projects):
         due_ms = parse_date_ms(due_raw)
         due_date = ms_to_date(due_ms)
 
-        if "PENDING ARTWORK" in status_upper or "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
-            waiting_art.append({"order": order_num, "link": link, "client": client})
+        if status_upper == "PENDING ARTWORK":
+            waiting_art.append({"order": order_num, "link": link, "client": client, "status": status, "board": tname})
 
         if due_date:
             days = (due_date - today).days
@@ -592,7 +592,7 @@ def build_morning_digest(projects):
     s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
     if waiting_art:
         for w in waiting_art:
-            s.append(f"  [{w['order']}]({w['link']}) \u2014 {w['client']}")
+            s.append(f"  [{w['order']}]({w['link']}) \u2014 {w['client']} ({w.get('board', '')})")
     else:
         s.append("  No artwork-pending orders. Clear on this front.")
 
@@ -1065,14 +1065,50 @@ def debug_fields():
             status_vals[st] = status_vals.get(st, 0) + 1
     return jsonify({"total": len(projects), "field_names": sorted(list(field_names_all)), "config": {"ORDER": FIELD_ORDER_NUM, "STATUS": FIELD_STATUS, "CLIENT": FIELD_CLIENT, "DUE": FIELD_DUE_DATE}, "raw_samples": raw_samples, "digest_sim": {"unique_with_order": has_order, "skip_no_order": skip_no_order, "skip_no_status": skip_no_status, "has_status": has_status, "top_statuses": dict(sorted(status_vals.items(), key=lambda x: -x[1])[:15])}})
 
+
+
+@app.route("/debug-artwork", methods=["GET"])
+def debug_artwork():
+    if DIGEST_SECRET:
+        provided = request.args.get("secret", "")
+        if provided != DIGEST_SECRET:
+            return jsonify({"error": "Unauthorized"}), 401
+    global _projects_cache_time
+    _projects_cache_time = 0
+    projects = fetch_all_projects()
+    if not projects:
+        return jsonify({"error": "No projects"})
+    seen = set()
+    artwork_projects = []
+    for p in projects:
+        order_num = get_order_num(p)
+        if not order_num or order_num in seen:
+            continue
+        seen.add(order_num)
+        status = get_status(p)
+        if not status:
+            continue
+        status_upper = status.upper()
+        if status_upper == "PENDING ARTWORK":
+            artwork_projects.append({
+                "order": order_num,
+                "status_raw": status,
+                "status_upper": status_upper,
+                "client": get_client_name(p),
+                "board": p.get("__table_name__", ""),
+                "table_id": p.get("__table_id__", ""),
+                "record_id": p.get("__record_id__", "")
+            })
+    return jsonify({"total_records": len(projects), "pending_artwork_count": len(artwork_projects), "projects": artwork_projects})
+
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.2"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.3"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.2", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.3", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
