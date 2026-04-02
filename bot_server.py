@@ -1274,6 +1274,43 @@ def index():
     })
 
 
+
+@app.route("/debug-fields", methods=["GET"])
+def debug_fields():
+    if DIGEST_SECRET:
+        provided = request.args.get("secret", "")
+        if provided != DIGEST_SECRET:
+            return jsonify({"error": "Unauthorized"}), 401
+    global _projects_cache_time
+    _projects_cache_time = 0
+    projects = fetch_all_projects()
+    if not projects:
+        return jsonify({"error": "No projects", "total": 0})
+    sample = projects[:3]
+    field_names_all = set()
+    for p in projects[:50]:
+        for k in p.keys():
+            if not k.startswith("__"):
+                field_names_all.add(k)
+    sample_clean = []
+    for p in sample:
+        clean = {}
+        for k, v in p.items():
+            clean[k] = field_to_text(v)[:100]
+        sample_clean.append(clean)
+    return jsonify({
+        "total": len(projects),
+        "field_names": sorted(list(field_names_all)),
+        "config_fields": {
+            "FIELD_ORDER_NUM": FIELD_ORDER_NUM,
+            "FIELD_STATUS": FIELD_STATUS,
+            "FIELD_DUE_DATE": FIELD_DUE_DATE,
+            "FIELD_CLIENT": FIELD_CLIENT,
+            "FIELD_ASSIGNED_TO": FIELD_ASSIGNED_TO,
+        },
+        "sample_records": sample_clean,
+    })
+
 # =========================================================================
 # STARTUP
 # =========================================================================
