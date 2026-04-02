@@ -142,11 +142,25 @@ DIGEST_SECRET = os.environ.get("DIGEST_SECRET", "")
 # BOARDS TO EXCLUDE FROM DIGEST (exact match, case-insensitive)
 # =============================================================================
 DIGEST_EXCLUDED_BOARDS = {
+    # Quotes tables
     "hannah quotes",
     "lucy quotes",
     "brendan quotes",
+    "quotes",
+    # Master production tables
+    "master - brendan",
+    "master - hannah",
+    "master - lucy",
+    "master - large client",
     "master production tab",
+    "master production tables",
+    # Utility / non-project tables
+    "hlt command center",
     "quick links",
+    "order issues sheet",
+    "brendan only",
+    "workflow",
+    "workflows",
 }
 
 # =============================================================================
