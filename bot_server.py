@@ -29,6 +29,7 @@ from config import (
     SKIP_STATUSES, DIGEST_EXCLUDED_BOARDS,
     LARK_CHAT_ID_DIGEST, DIGEST_SECRET,
     ALL_ORDERS_VIEW_KEYWORD,
+    ALT_ORDER_NUM_FIELDS, ALT_CLIENT_FIELDS, ALT_STATUS_FIELDS, ALT_DUE_DATE_FIELDS,
 )
 
 FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
@@ -53,22 +54,23 @@ CONVERSATION_MAX_TURNS = 10
 CONVERSATION_TTL = 3600
 _memory_history = {}
 
+
 # =========================================================================
-# DATABASE CONNECTION POOL (prevents crashes from too many connections)
+# DATABASE CONNECTION POOL
 # =========================================================================
 _db_pool = None
+
 
 def _get_db_pool():
     global _db_pool
     if _db_pool is None and DATABASE_URL:
         try:
-            _db_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=1, maxconn=5, dsn=DATABASE_URL, connect_timeout=10
-            )
+            _db_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=5, dsn=DATABASE_URL, connect_timeout=10)
             logger.info("DB connection pool created")
         except Exception as e:
             logger.error(f"DB pool creation error: {e}")
     return _db_pool
+
 
 def _get_db_conn():
     pool = _get_db_pool()
@@ -83,6 +85,7 @@ def _get_db_conn():
         except Exception as e:
             logger.error(f"DB direct conn error: {e}")
     return None
+
 
 def _put_db_conn(conn):
     pool = _get_db_pool()
@@ -149,10 +152,7 @@ def _mark_action_clicked(action_id, clicked_by=""):
         return False
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO card_actions (action_id, clicked_by) VALUES (%s, %s) ON CONFLICT (action_id) DO NOTHING",
-                (action_id, clicked_by),
-            )
+            cur.execute("INSERT INTO card_actions (action_id, clicked_by) VALUES (%s, %s) ON CONFLICT (action_id) DO NOTHING", (action_id, clicked_by))
         conn.commit()
         return True
     except Exception as e:
@@ -182,10 +182,7 @@ def _mark_comment_seen(comment_id, table_id, record_id):
         return False
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO seen_comments (comment_id, table_id, record_id) VALUES (%s, %s, %s) ON CONFLICT (comment_id) DO NOTHING",
-                (comment_id, table_id, record_id),
-            )
+            cur.execute("INSERT INTO seen_comments (comment_id, table_id, record_id) VALUES (%s, %s, %s) ON CONFLICT (comment_id) DO NOTHING", (comment_id, table_id, record_id))
         conn.commit()
         return True
     except Exception as e:
@@ -201,10 +198,7 @@ def _get_conversation(chat_id):
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
                 cur.execute("DELETE FROM conversations WHERE created_at < NOW() - INTERVAL '%s seconds'", (CONVERSATION_TTL,))
-                cur.execute(
-                    "SELECT role, content FROM conversations WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s",
-                    (chat_id, CONVERSATION_MAX_TURNS * 2),
-                )
+                cur.execute("SELECT role, content FROM conversations WHERE chat_id = %s ORDER BY created_at DESC LIMIT %s", (chat_id, CONVERSATION_MAX_TURNS * 2))
                 rows = cur.fetchall()
             conn.commit()
             return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
@@ -231,12 +225,41 @@ def _add_to_conversation(chat_id, role, content):
         _memory_history[chat_id] = []
     _memory_history[chat_id].append({"role": role, "content": content[:8000]})
     if len(_memory_history[chat_id]) > CONVERSATION_MAX_TURNS * 2:
-        _memory_history[chat_id] = _memory_history[chat_id][-CONVERSATION_MAX_TURNS * 2 :]
+        _memory_history[chat_id] = _memory_history[chat_id][-CONVERSATION_MAX_TURNS * 2:]
 
 
 # =========================================================================
-# HELPERS
+# HELPERS - Flexible field lookup (tries multiple field names)
 # =========================================================================
+def _get_field(fields, primary, alternates=None):
+    """Try primary field name, then alternates. Returns raw value."""
+    val = fields.get(primary)
+    if val is not None and val != "" and val != []:
+        return val
+    if alternates:
+        for alt in alternates:
+            val = fields.get(alt)
+            if val is not None and val != "" and val != []:
+                return val
+    return ""
+
+
+def get_order_num(fields):
+    return field_to_text(_get_field(fields, FIELD_ORDER_NUM, ALT_ORDER_NUM_FIELDS))
+
+
+def get_client_name(fields):
+    return field_to_text(_get_field(fields, FIELD_CLIENT, ALT_CLIENT_FIELDS))
+
+
+def get_status(fields):
+    return field_to_text(_get_field(fields, FIELD_STATUS, ALT_STATUS_FIELDS))
+
+
+def get_due_date_raw(fields):
+    return _get_field(fields, FIELD_DUE_DATE, ALT_DUE_DATE_FIELDS)
+
+
 def record_link(table_id, record_id):
     return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view=vewGgswDcu&record={record_id}"
 
@@ -331,13 +354,12 @@ def get_user_name(open_id):
 
 
 def _est_now():
-    """Return current datetime in US Eastern."""
     from zoneinfo import ZoneInfo
     return datetime.now(ZoneInfo("America/New_York"))
 
 
 # =========================================================================
-# FETCH ALL PROJECTS (cached, uses ALL ORDERS views to avoid duplicates)
+# FETCH ALL PROJECTS
 # =========================================================================
 def _find_all_orders_view(table_id):
     try:
@@ -395,83 +417,34 @@ def _fetch_bot_open_id():
 
 
 # =========================================================================
-# FEATURE 1 - NOTIFY CARD (Hannah/Lucy -> Founders Channel)
-# Header: Orange (#FF8C00) if Hannah, Light Red (#FF6B6B) if Lucy
-# Includes: SO#, Client, Production Artwork image, one-click Viewed button
-# Button deactivates after Brendan clicks
+# FEATURE 1 - NOTIFY CARD -> Founders Channel
 # =========================================================================
 def build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key=""):
-    # Lark card templates: orange, red, blue, purple, green, yellow, turquoise, grey, indigo, violet
-    # For exact hex colors we use the closest template
     color = "orange" if assigned_to == "Hannah" else "red"
     link = record_link(table_id, record_id)
     action_id = f"notify_viewed_{table_id}_{record_id}"
-
-    elements = [
-        {
-            "tag": "markdown",
-            "content": f"**Sales Order:** {order_num}\n**Client:** {client}\n**Assigned To:** {assigned_to}",
-        }
-    ]
-
+    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Client:** {client}\n**Assigned To:** {assigned_to}"}]
     if image_key:
-        elements.append(
-            {"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}}
-        )
-
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     if _is_action_clicked(action_id):
-        elements.append(
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "Viewed \u2713"},
-                        "type": "default",
-                        "disabled": True,
-                    }
-                ],
-            }
-        )
+        elements.append({"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "Viewed \u2713"}, "type": "default", "disabled": True}]})
     else:
-        elements.append(
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "\ud83d\udc41 Mark as Viewed"},
-                        "type": "primary",
-                        "value": {"action": action_id},
-                    }
-                ],
-            }
-        )
-
+        elements.append({"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udc41 Mark as Viewed"}, "type": "primary", "value": {"action": action_id}}]})
     elements.append({"tag": "markdown", "content": f"[Open Record]({link})"})
-
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": f"\ud83d\udce2 Notify: {order_num} - {client}"},
-            "template": color,
-        },
-        "elements": elements,
-    }
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce2 Notify: {order_num} - {client}"}, "template": color}, "elements": elements}
 
 
 def handle_notify_button(table_id, record_id):
     try:
         record = lark.get_record(table_id, record_id)
         fields = record.get("fields", {})
-        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
-        client = field_to_text(fields.get(FIELD_CLIENT, ""))
+        order_num = get_order_num(fields)
+        client = get_client_name(fields)
         assigned_to = get_assigned_to(fields)
         if assigned_to == "Brendan":
             assigned_to = get_assigned_from_table("")
         image_key = get_image_key_from_field(fields)
         card = build_notify_card(order_num, client, assigned_to, table_id, record_id, image_key)
-        # Always post to Founders Channel
         target = FOUNDERS_CHAT
         if target:
             lark.send_card(card, chat_id=target)
@@ -483,65 +456,26 @@ def handle_notify_button(table_id, record_id):
 
 
 # =========================================================================
-# FEATURE 2 - UPDATE TEAM CARD (Brendan -> Hannah/Lucy channels)
-# Purple (#7B2FBE) card to Production Hannah/Lucy Channel
-# Contains SO#, description, View Record button, Mark Resolved button
-# Mark Resolved -> confirmation card to Founders Channel
+# FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
-
-    elements = [
-        {
-            "tag": "markdown",
-            "content": f"**Sales Order:** {order_num}\n**Description:** {description}",
-        }
-    ]
-
-    view_btn = {
-        "tag": "button",
-        "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"},
-        "type": "default",
-        "url": link,
-    }
-
+    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}"}]
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        resolve_btn = {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Resolved \u2713"},
-            "type": "default",
-            "disabled": True,
-        }
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
-        resolve_btn = {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
-            "type": "primary",
-            "value": {
-                "action": action_id,
-                "order_num": order_num,
-                "assigned_to": assigned_to,
-            },
-        }
-
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Update \u2014 {order_num}"},
-            "template": "purple",
-        },
-        "elements": elements,
-    }
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Update \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
 
 
 def handle_update_team_button(table_id, record_id):
     try:
         record = lark.get_record(table_id, record_id)
         fields = record.get("fields", {})
-        order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
+        order_num = get_order_num(fields)
         description = field_to_text(fields.get(FIELD_DESCRIPTION, ""))
         assigned_to = get_assigned_to(fields)
         if assigned_to == "Brendan":
@@ -551,7 +485,6 @@ def handle_update_team_button(table_id, record_id):
                     assigned_to = get_assigned_from_table(t.get("name", ""))
                     break
         card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
-        # Route to correct channel based on Assigned To
         if assigned_to == "Hannah":
             target = LARK_CHAT_ID_HANNAH
         elif assigned_to == "Lucy":
@@ -568,9 +501,7 @@ def handle_update_team_button(table_id, record_id):
 
 
 # =========================================================================
-# FEATURE 3 - MORNING DIGEST (Founders Channel, 8am EST)
-# Sections: Project Overview, Need Artwork, Due 7d, Due 14d, Overdue, Summary
-# Uses ALL ORDERS views only to avoid duplicates
+# FEATURE 3 - MORNING DIGEST (uses flexible field lookups)
 # =========================================================================
 def build_morning_digest(projects):
     today = datetime.now(timezone.utc).date()
@@ -581,15 +512,21 @@ def build_morning_digest(projects):
     overdue = []
     seen = set()
     person_projects = {"Brendan": [], "Hannah": [], "Lucy": []}
+    skipped_no_order = 0
+    skipped_no_status = 0
 
     for p in projects:
-        order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
-        if not order_num or order_num in seen:
+        order_num = get_order_num(p)
+        if not order_num:
+            skipped_no_order += 1
+            continue
+        if order_num in seen:
             continue
         seen.add(order_num)
 
-        status = field_to_text(p.get(FIELD_STATUS, "")).strip()
+        status = get_status(p)
         if not status:
+            skipped_no_status += 1
             continue
         status_upper = status.upper()
         status_counts[status] = status_counts.get(status, 0) + 1
@@ -597,7 +534,7 @@ def build_morning_digest(projects):
         if any(s in status_upper for s in ("SHIPPED", "RESOLVED", "CANCELLED")):
             continue
 
-        client = field_to_text(p.get(FIELD_CLIENT, ""))
+        client = get_client_name(p)
         tname = p.get("__table_name__", "")
         tid = p.get("__table_id__", "")
         rid = p.get("__record_id__", "")
@@ -606,7 +543,8 @@ def build_morning_digest(projects):
         if assigned == "Brendan":
             assigned = get_assigned_from_table(tname)
 
-        due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
+        due_raw = get_due_date_raw(p)
+        due_ms = parse_date_ms(due_raw)
         due_date = ms_to_date(due_ms)
 
         if "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
@@ -614,23 +552,15 @@ def build_morning_digest(projects):
 
         if due_date:
             days = (due_date - today).days
-            entry = {
-                "order": order_num, "client": client, "board": tname,
-                "date": due_date, "days": days, "status": status,
-                "link": link, "assigned": assigned,
-            }
+            entry = {"order": order_num, "client": client, "board": tname, "date": due_date, "days": days, "status": status, "link": link, "assigned": assigned}
             if days < 0:
                 overdue.append(entry)
             elif days <= 7:
                 due_7.append(entry)
             elif days <= 14:
                 due_14.append(entry)
-
             if assigned in person_projects:
-                person_projects[assigned].append({
-                    "order": order_num, "client": client, "status": status,
-                    "days": days, "board": tname,
-                })
+                person_projects[assigned].append({"order": order_num, "client": client, "status": status, "days": days, "board": tname})
 
     overdue.sort(key=lambda x: x["days"])
     due_7.sort(key=lambda x: x["days"])
@@ -638,7 +568,8 @@ def build_morning_digest(projects):
 
     total_active = sum(v for k, v in status_counts.items() if k.upper() not in ("SHIPPED", "RESOLVED", "CANCELLED"))
 
-    # --- Build digest sections ---
+    logger.info(f"Digest stats: {len(seen)} unique orders, {skipped_no_order} skipped (no order#), {skipped_no_status} skipped (no status), {total_active} active")
+
     s = [f"**\ud83d\udcca Project Overview** | Active Projects: **{total_active}**"]
     for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
         emoji = "\ud83d\udfe2" if "CONFIRM" in st.upper() else "\ud83d\udfe1" if "PENDING" in st.upper() else "\u26aa"
@@ -666,27 +597,13 @@ def build_morning_digest(projects):
 
     digest = "\n".join(s)
 
-    # --- Section 6: General Summary (AI) ---
     try:
         brendan_summary = _person_summary("Brendan", person_projects.get("Brendan", []))
         hannah_summary = _person_summary("Hannah", person_projects.get("Hannah", []))
         lucy_summary = _person_summary("Lucy", person_projects.get("Lucy", []))
-        summary_data = (
-            f"Overdue: {len(overdue)}, Due 7d: {len(due_7)}, Due 14d: {len(due_14)}, Waiting Art: {len(waiting_art)}\n"
-            f"Brendan: {brendan_summary}\nHannah: {hannah_summary}\nLucy: {lucy_summary}"
-        )
-        prompt = (
-            "Write a brief daily focus summary for the HLT production team. "
-            "Address what Brendan, Hannah, and Lucy each need to focus on today. "
-            "Flag anything urgent (overdue or due soon). Be direct and concise, 3-5 sentences.\n\n"
-            + summary_data
-        )
-        resp = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=600,
-            system="You are Iron Bot, HLT's production assistant. Write a brief, actionable daily summary.",
-            messages=[{"role": "user", "content": prompt}],
-        )
+        summary_data = f"Overdue: {len(overdue)}, Due 7d: {len(due_7)}, Due 14d: {len(due_14)}, Waiting Art: {len(waiting_art)}\nBrendan: {brendan_summary}\nHannah: {hannah_summary}\nLucy: {lucy_summary}"
+        prompt = f"Write a brief daily focus summary for the HLT production team. Address what Brendan, Hannah, and Lucy each need to focus on today. Flag anything urgent. Be direct, 3-5 sentences.\n\n{summary_data}"
+        resp = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=600, system="You are Iron Bot, HLT's production assistant.", messages=[{"role": "user", "content": prompt}])
         digest += f"\n\n**\ud83d\udcdd Daily Focus**\n{resp.content[0].text.strip()}"
     except Exception as e:
         logger.error(f"AI summary error: {e}")
@@ -710,10 +627,6 @@ def _person_summary(name, projects):
 
 # =========================================================================
 # FEATURE 4 - DUE DATE ALERTS with REQUEST UPDATE
-# 8am alongside digest. 7-day (yellow) and 14-day (orange) alerts.
-# Routes to correct channel by Assigned To.
-# Skips Shipped or Artwork Confirmed.
-# Request Update button -> confirmation to Founders Channel.
 # =========================================================================
 def send_due_date_alerts():
     projects = fetch_all_projects()
@@ -721,56 +634,44 @@ def send_due_date_alerts():
     alerts_7 = {}
     alerts_14 = {}
     seen = set()
-
     for p in projects:
-        order_num = field_to_text(p.get(FIELD_ORDER_NUM, ""))
+        order_num = get_order_num(p)
         if not order_num or order_num in seen:
             continue
         seen.add(order_num)
-
-        status = field_to_text(p.get(FIELD_STATUS, "")).strip().upper()
+        status = get_status(p).upper()
         if any(s in status for s in ("SHIPPED", "ARTWORK CONFIRMED", "RESOLVED", "CANCELLED")):
             continue
-
-        due_ms = parse_date_ms(p.get(FIELD_DUE_DATE) or p.get("Due Date") or p.get("In Hand Date", 0))
+        due_ms = parse_date_ms(get_due_date_raw(p))
         due_date = ms_to_date(due_ms)
         if not due_date:
             continue
         days = (due_date - today).days
         if days < 0 or days > 14:
             continue
-
         tname = p.get("__table_name__", "")
         assigned = get_assigned_to(p)
         if assigned == "Brendan":
             assigned = get_assigned_from_table(tname)
-        client = field_to_text(p.get(FIELD_CLIENT, ""))
+        client = get_client_name(p)
         tid = p.get("__table_id__", "")
         rid = p.get("__record_id__", "")
         link = record_link(tid, rid)
-        entry = {
-            "order": order_num, "client": client,
-            "date": due_date.strftime("%m/%d/%Y"), "days": days,
-            "status": field_to_text(p.get(FIELD_STATUS, "")),
-            "link": link, "tid": tid, "rid": rid,
-        }
+        entry = {"order": order_num, "client": client, "date": due_date.strftime("%m/%d/%Y"), "days": days, "status": get_status(p), "link": link, "tid": tid, "rid": rid}
         if days <= 7:
             alerts_7.setdefault(assigned, []).append(entry)
         else:
             alerts_14.setdefault(assigned, []).append(entry)
-
     for assigned, entries in alerts_7.items():
         card = _build_alert_card(entries, 7, assigned)
         target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
         if target:
             lark.send_card(card, chat_id=target)
-
     for assigned, entries in alerts_14.items():
         card = _build_alert_card(entries, 14, assigned)
         target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
         if target:
             lark.send_card(card, chat_id=target)
-
     logger.info(f"Due alerts sent: {len(alerts_7)} groups (7d), {len(alerts_14)} groups (14d)")
 
 
@@ -779,68 +680,35 @@ def _build_alert_card(entries, window, assigned):
     title = f"Due Within {window} Days"
     lines = []
     actions = []
-
     for e in entries:
         days_label = "**TODAY**" if e["days"] == 0 else f"{e['days']}d left"
         lines.append(f"**{e['order']}** \u2014 {e['client']} | In-Hand: {e['date']} | {days_label} | {e['status']}")
         lines.append(f"  [View Record]({e['link']})")
-
         aid = f"request_update_{e['tid']}_{e['rid']}"
         if _is_action_clicked(aid):
-            actions.append({
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": f"Acknowledged \u2713 {e['order']}"},
-                "type": "default",
-                "disabled": True,
-            })
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledged \u2713 {e['order']}"}, "type": "default", "disabled": True})
         else:
-            actions.append({
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": f"\ud83d\udcdd Request Update {e['order']}"},
-                "type": "primary",
-                "value": {
-                    "action": aid,
-                    "order_num": e["order"],
-                    "client": e["client"],
-                    "date": e["date"],
-                    "status": e["status"],
-                },
-            })
-
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"\ud83d\udcdd Update {e['order']}"}, "type": "primary", "value": {"action": aid, "order_num": e["order"], "client": e["client"], "date": e["date"], "status": e["status"]}})
     elements = [{"tag": "markdown", "content": "\n".join(lines)}]
-    # Lark limits 4 actions per action block, so chunk them
     for i in range(0, len(actions), 4):
-        elements.append({"tag": "action", "actions": actions[i : i + 4]})
-
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"},
-            "template": color,
-        },
-        "elements": elements,
-    }
+        elements.append({"tag": "action", "actions": actions[i:i + 4]})
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 
 # =========================================================================
-# FEATURE 6 - COMMENT ALERTS
-# When Hannah/Lucy comments on a project, post card to Urgent/Approvals channel
-# Card has: View Record button + Mark as Resolved button
+# FEATURE 6 - COMMENT ALERTS -> Urgent/Approvals channel
 # =========================================================================
 def check_new_comments():
     if not URGENT_APPROVALS_CHAT:
-        logger.warning("No URGENT_APPROVALS_CHAT set, skipping comment check")
+        logger.warning("No URGENT_APPROVALS_CHAT set")
         return
     try:
         tables = lark.get_all_tables()
     except Exception as e:
         logger.error(f"Comment check - tables error: {e}")
         return
-
     new_count = 0
     errors = 0
-    checked = 0
-
     for table in tables:
         table_id = table.get("table_id", "")
         table_name = table.get("name", "")
@@ -848,42 +716,33 @@ def check_new_comments():
             continue
         try:
             records = lark.get_table_records(table_id) or []
-        except Exception as e:
-            logger.warning(f"Comment check - records error on {table_name}: {str(e)[:60]}")
+        except Exception:
             errors += 1
             continue
-
         for rec in records[:50]:
             record_id = rec.get("record_id", "")
             if not record_id:
                 continue
-            checked += 1
             try:
                 comments = lark.get_record_comments(table_id, record_id)
             except Exception:
                 continue
             if not comments:
                 continue
-
             fields = rec.get("fields", {})
-            order_num = field_to_text(fields.get(FIELD_ORDER_NUM, ""))
-
+            order_num = get_order_num(fields)
             for comment in comments:
                 cid = comment.get("comment_id", "")
                 if not cid or _is_comment_seen(cid):
                     continue
-
                 user_name = comment.get("user_name", "Unknown")
-                # Only alert for Hannah or Lucy comments
                 if user_name.lower() not in ("hannah", "lucy"):
                     _mark_comment_seen(cid, table_id, record_id)
                     continue
-
                 _mark_comment_seen(cid, table_id, record_id)
                 content_text = comment.get("content", "")
                 link = record_link(table_id, record_id)
                 action_id = f"comment_resolved_{table_id}_{record_id}_{cid}"
-
                 card = _build_comment_card(order_num, table_name, user_name, content_text, link, action_id)
                 try:
                     lark.send_card(card, chat_id=URGENT_APPROVALS_CHAT)
@@ -891,55 +750,23 @@ def check_new_comments():
                 except Exception as e:
                     logger.error(f"Comment card send error: {e}")
                     errors += 1
-
-    logger.info(f"Comment check done: {new_count} new, {checked} checked, {errors} errors")
+    logger.info(f"Comment check: {new_count} new, {errors} errors")
 
 
 def _build_comment_card(order_num, table_name, user_name, content_text, link, action_id):
     display_order = order_num or "Unknown Record"
-    elements = [
-        {
-            "tag": "markdown",
-            "content": f"**From:** {user_name}\n**Record:** {display_order}\n**Board:** {table_name}\n\n{content_text[:500]}",
-        }
-    ]
-
-    view_btn = {
-        "tag": "button",
-        "text": {"tag": "plain_text", "content": "\ud83d\udd17 View Record"},
-        "type": "default",
-        "url": link,
-    }
-
+    elements = [{"tag": "markdown", "content": f"**From:** {user_name}\n**Record:** {display_order}\n**Board:** {table_name}\n\n{content_text[:500]}"}]
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udd17 View Record"}, "type": "default", "url": link}
     if _is_action_clicked(action_id):
-        resolve_btn = {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Resolved \u2713"},
-            "type": "default",
-            "disabled": True,
-        }
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
-        resolve_btn = {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"},
-            "type": "primary",
-            "value": {"action": action_id},
-        }
-
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark as Resolved"}, "type": "primary", "value": {"action": action_id}}
     elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": f"\ud83d\udcac Comment: {display_order} \u2014 {user_name}"},
-            "template": "turquoise",
-        },
-        "elements": elements,
-    }
+    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udcac Comment: {display_order} \u2014 {user_name}"}, "template": "turquoise"}, "elements": elements}
 
 
 # =========================================================================
-# CARD CALLBACK HANDLER (processes all button clicks from Lark cards)
+# CARD CALLBACK HANDLER
 # =========================================================================
 def handle_card_callback(body):
     action = body.get("action", {})
@@ -949,44 +776,26 @@ def handle_card_callback(body):
     operator_id = operator.get("open_id", "")
     operator_name = get_user_name(operator_id)
     logger.info(f"Card callback: {action_str} by {operator_name}")
-
     if not action_str:
         return {"toast": {"type": "info", "content": "No action"}}
 
-    # FEATURE 1: Notify Viewed (Brendan clicks)
     if action_str.startswith("notify_viewed_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already viewed"}}
         _mark_action_clicked(action_str, operator_name)
         return {"toast": {"type": "success", "content": f"Viewed by {operator_name}"}}
 
-    # FEATURE 2: Mark Resolved (Hannah/Lucy clicks)
     if action_str.startswith("mark_resolved_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
-        assigned_to = action_value.get("assigned_to", "")
-        # Send confirmation card to Founders Channel
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
-            confirm_card = {
-                "config": {"wide_screen_mode": True},
-                "header": {
-                    "title": {"tag": "plain_text", "content": "\u2705 Resolved"},
-                    "template": "green",
-                },
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": f"**{operator_name}** marked **{order_num}** as resolved \u2014 {now_str}",
-                    }
-                ],
-            }
+            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as resolved \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
-    # FEATURE 4: Request Update acknowledged (Hannah/Lucy clicks)
     if action_str.startswith("request_update_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already acknowledged"}}
@@ -994,38 +803,18 @@ def handle_card_callback(body):
         order_num = action_value.get("order_num", "")
         date_str = action_value.get("date", "")
         status_str = action_value.get("status", "")
-        # Send acknowledgement card to Founders Channel
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
-            ack_card = {
-                "config": {"wide_screen_mode": True},
-                "header": {
-                    "title": {"tag": "plain_text", "content": "\ud83d\udcdd Update Acknowledged"},
-                    "template": "blue",
-                },
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": (
-                            f"**{operator_name}** acknowledged **{order_num}**\n"
-                            f"In-Hand Date: {date_str}\n"
-                            f"Current Status: {status_str}\n"
-                            f"Time: {now_str}"
-                        ),
-                    }
-                ],
-            }
+            ack_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\ud83d\udcdd Update Acknowledged"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** acknowledged **{order_num}**\nIn-Hand Date: {date_str}\nCurrent Status: {status_str}\nTime: {now_str}"}]}
             lark.send_card(ack_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Acknowledged"}}
 
-    # FEATURE 6: Comment resolved
     if action_str.startswith("comment_resolved_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         return {"toast": {"type": "success", "content": f"Comment resolved by {operator_name}"}}
 
-    # Legacy: mark_updated_ (status request)
     if action_str.startswith("mark_updated_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already updated"}}
@@ -1035,7 +824,6 @@ def handle_card_callback(body):
             lark.send_text(f"\ud83d\udcca {operator_name} updated status for {order_num}", chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": "Marked as updated"}}
 
-    # Legacy: artwork_sent_
     if action_str.startswith("artwork_sent_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already marked as sent"}}
@@ -1049,7 +837,7 @@ def handle_card_callback(body):
 
 
 # =========================================================================
-# AI CHAT (Claude-powered Q&A about projects)
+# AI CHAT
 # =========================================================================
 def get_user_scope(sender_open_id):
     if sender_open_id == HANNAH_OPEN_ID:
@@ -1108,17 +896,9 @@ def _process_message(user_text, chat_id, scope="brendan", sender_id=""):
         chat_hist = _get_conversation(chat_id)
         _add_to_conversation(chat_id, "user", user_text)
         context = build_context(projects)
-        system_prompt = (
-            "You are IRON BOT, HLT internal assistant powered by Claude. "
-            "Be conversational and proactive. 'Due Date' = 'In Hand Date'. Timestamps are Unix ms."
-        )
+        system_prompt = "You are IRON BOT, HLT internal assistant powered by Claude. Be conversational and proactive. 'Due Date' = 'In Hand Date'. Timestamps are Unix ms."
         user_message = f"--- LARK DATA ---\n{context}\n--- END ---\n\nQuestion: {user_text}"
-        response = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=system_prompt,
-            messages=(chat_hist or []) + [{"role": "user", "content": user_message}],
-        )
+        response = anthropic_client.messages.create(model="claude-sonnet-4-6", max_tokens=4096, system=system_prompt, messages=(chat_hist or []) + [{"role": "user", "content": user_message}])
         answer = response.content[0].text.strip()
         _add_to_conversation(chat_id, "assistant", answer)
         lark.send_group_message(answer, chat_id=chat_id)
@@ -1146,33 +926,23 @@ def webhook():
     body = request.get_json(silent=True) or {}
     if body.get("type") == "url_verification":
         return jsonify({"challenge": body.get("challenge", "")})
-
     header = body.get("header", {})
     event_type = header.get("event_type", "")
     event = body.get("event", {})
     msg = event.get("message", {})
     msg_type = msg.get("message_type", "")
     sender = event.get("sender", {})
-    sender_type = sender.get("sender_type", "")
-    logger.info(f"Webhook: type={event_type}, msg_type={msg_type}, sender_type={sender_type}")
-
-    if event_type != "im.message.receive_v1":
+    if event_type != "im.message.receive_v1" or msg_type != "text":
         return jsonify({"code": 0})
-    if msg_type != "text":
-        return jsonify({"code": 0})
-
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
         return jsonify({"code": 0})
-
     user_text = extract_question(msg)
     if not user_text:
         return jsonify({"code": 0})
-
     chat_id = msg.get("chat_id", "")
     if not chat_id:
         return jsonify({"code": 0})
-
     sender_open_id = sender.get("sender_id", {}).get("open_id", "")
     scope = get_user_scope(sender_open_id)
     threading.Thread(target=_process_message, args=(user_text, chat_id, scope, sender_open_id), daemon=True).start()
@@ -1190,14 +960,12 @@ def card_callback():
 
 @app.route("/notify/<table_id>/<record_id>", methods=["POST", "GET"])
 def notify_endpoint(table_id, record_id):
-    result = handle_notify_button(table_id, record_id)
-    return jsonify(result)
+    return jsonify(handle_notify_button(table_id, record_id))
 
 
 @app.route("/update-team/<table_id>/<record_id>", methods=["POST", "GET"])
 def update_team_endpoint(table_id, record_id):
-    result = handle_update_team_button(table_id, record_id)
-    return jsonify(result)
+    return jsonify(handle_update_team_button(table_id, record_id))
 
 
 @app.route("/morning-digest", methods=["POST", "GET"])
@@ -1206,38 +974,21 @@ def morning_digest():
         provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
-
     chat_id = FOUNDERS_CHAT
     if not chat_id:
         return jsonify({"error": "No founders channel configured"}), 500
-
     try:
         global _projects_cache_time
         _projects_cache_time = 0
         projects = fetch_all_projects()
         if not projects:
             return jsonify({"error": "No data"}), 500
-
         digest = build_morning_digest(projects)
         now_str = _est_now().strftime("%A, %B %d, %Y")
         total = len(projects)
-
-        card = {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "title": {"tag": "plain_text", "content": f"\ud83c\udf05 IRON BOT MORNING BRIEFING"},
-                "template": "blue",
-            },
-            "elements": [
-                {"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"},
-                {"tag": "markdown", "content": digest},
-            ],
-        }
+        card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83c\udf05 IRON BOT MORNING BRIEFING"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"}, {"tag": "markdown", "content": digest}]}
         lark.send_card(card, chat_id=chat_id)
-
-        # Also run due date alerts alongside
         send_due_date_alerts()
-
         return jsonify({"status": "ok", "records": total})
     except Exception as e:
         logger.error(f"Digest error: {e}")
@@ -1251,28 +1002,7 @@ def check_comments_endpoint():
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
     threading.Thread(target=check_new_comments, daemon=True).start()
-    return jsonify({"status": "started", "message": "Comment check running in background"})
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({
-        "status": "ok",
-        "bot": BOT_NAME,
-        "bot_open_id": BOT_OPEN_ID or "loading",
-        "version": "4.0",
-        "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"],
-    })
-
-
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({
-        "code": 0,
-        "bot": "Iron Bot v4.0",
-        "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"],
-    })
-
+    return jsonify({"status": "started"})
 
 
 @app.route("/debug-fields", methods=["GET"])
@@ -1285,31 +1015,30 @@ def debug_fields():
     _projects_cache_time = 0
     projects = fetch_all_projects()
     if not projects:
-        return jsonify({"error": "No projects", "total": 0})
-    sample = projects[:3]
+        return jsonify({"error": "No projects"})
     field_names_all = set()
     for p in projects[:50]:
         for k in p.keys():
             if not k.startswith("__"):
                 field_names_all.add(k)
     sample_clean = []
-    for p in sample:
+    for p in projects[:5]:
         clean = {}
         for k, v in p.items():
             clean[k] = field_to_text(v)[:100]
         sample_clean.append(clean)
-    return jsonify({
-        "total": len(projects),
-        "field_names": sorted(list(field_names_all)),
-        "config_fields": {
-            "FIELD_ORDER_NUM": FIELD_ORDER_NUM,
-            "FIELD_STATUS": FIELD_STATUS,
-            "FIELD_DUE_DATE": FIELD_DUE_DATE,
-            "FIELD_CLIENT": FIELD_CLIENT,
-            "FIELD_ASSIGNED_TO": FIELD_ASSIGNED_TO,
-        },
-        "sample_records": sample_clean,
-    })
+    return jsonify({"total": len(projects), "field_names": sorted(list(field_names_all)), "config_fields": {"FIELD_ORDER_NUM": FIELD_ORDER_NUM, "FIELD_STATUS": FIELD_STATUS, "FIELD_DUE_DATE": FIELD_DUE_DATE, "FIELD_CLIENT": FIELD_CLIENT}, "sample_records": sample_clean})
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.1"})
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"code": 0, "bot": "Iron Bot v4.1", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+
 
 # =========================================================================
 # STARTUP
@@ -1321,7 +1050,6 @@ COMMENT_POLL_INTERVAL = int(os.environ.get("COMMENT_POLL_INTERVAL", "300"))
 
 
 def _comment_poll_loop():
-    """Background loop that checks for new comments every COMMENT_POLL_INTERVAL seconds."""
     time.sleep(30)
     while True:
         try:
