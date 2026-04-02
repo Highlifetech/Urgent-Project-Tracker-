@@ -18,8 +18,8 @@ LARK_BASE_APP_TOKEN = os.environ.get("LARK_BASE_APP_TOKEN", "")
 
 # Base URL for record links (JP region)
 LARK_BASE_RECORD_URL = os.environ.get(
-            "LARK_BASE_RECORD_URL",
-            "https://ojpglhhzxlvc.jp.larksuite.com/base/"
+    "LARK_BASE_RECORD_URL",
+    "https://ojpglhhzxlvc.jp.larksuite.com/base/",
 )
 
 # =============================================================================
@@ -78,20 +78,26 @@ NETSUITE_TOKEN_SECRET = os.environ.get("NETSUITE_TOKEN_SECRET", "")
 # =============================================================================
 # FIELD NAMES (must match Lark Base columns exactly)
 # =============================================================================
-FIELD_ORDER_NUM = "Order #"
+FIELD_ORDER_NUM = "Sales Order"
 FIELD_ORDER_DATE = "Order Date"
 FIELD_DUE_DATE = "In-Hand Date"
 FIELD_STATUS = "Status"
 FIELD_DESCRIPTION = "Description"
 FIELD_ADDRESS = "Address"
-FIELD_QTY_ORDERED = "Quantity Ordered"
+FIELD_QTY_ORDERED = "Quantity"
 FIELD_PRODUCTION_DRAWING = "Production Drawing"
-FIELD_CLIENT = "Client"
+FIELD_CLIENT = "Client Name"
 FIELD_ASSIGNED_TO = "Assigned To"
 FIELD_PRODUCTION_ARTWORK = "Production Artwork"
 FIELD_CLIENT_EMAIL = "Client Email"
 FIELD_VENDOR = "Vendor"
 ARTWORK_CONFIRMED_STATUS = "Artwork Confirmed"
+
+# Alternate field names (some tables may use different names)
+ALT_ORDER_NUM_FIELDS = ["Sales Order", "Order #", "SO#", "Order Number"]
+ALT_CLIENT_FIELDS = ["Client Name", "CLIENT", "Client"]
+ALT_STATUS_FIELDS = ["Status"]
+ALT_DUE_DATE_FIELDS = ["In-Hand Date", "Due Date", "In Hand Date"]
 
 # =============================================================================
 # KNOWN USER OPEN IDS
@@ -105,7 +111,6 @@ LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388
 # =============================================================================
 DONE_STATUS = "Shipped"
 SKIP_STATUSES = ["Shipped", "Artwork Confirmed", "RESOLVED/SHIPPED"]
-
 WARNING_DAYS = [21, 14, 7]
 WARNING_LABELS = {21: "3 weeks", 14: "2 weeks", 7: "1 week"}
 
@@ -113,16 +118,17 @@ WARNING_LABELS = {21: "3 weeks", 14: "2 weeks", 7: "1 week"}
 # CHAT ROUTING
 # =============================================================================
 CHAT_ROUTING = {
-            "hannah": LARK_CHAT_ID_HANNAH,
-            "lucy": LARK_CHAT_ID_LUCY,
-            "chen": LARK_CHAT_ID_CHEN,
+    "hannah": LARK_CHAT_ID_HANNAH,
+    "lucy": LARK_CHAT_ID_LUCY,
+    "chen": LARK_CHAT_ID_CHEN,
 }
+
 NOTIFICATION_MASTER_CHAT = LARK_CHAT_ID_MASTER
 NOTIFICATION_CHATS = [
-            LARK_CHAT_ID_HANNAH,
-            LARK_CHAT_ID_LUCY,
-            LARK_CHAT_ID_CHEN,
-            LARK_CHAT_ID_MASTER,
+    LARK_CHAT_ID_HANNAH,
+    LARK_CHAT_ID_LUCY,
+    LARK_CHAT_ID_CHEN,
+    LARK_CHAT_ID_MASTER,
 ]
 
 # =============================================================================
@@ -136,11 +142,15 @@ DIGEST_SECRET = os.environ.get("DIGEST_SECRET", "")
 # BOARDS TO EXCLUDE FROM DIGEST (exact match, case-insensitive)
 # =============================================================================
 DIGEST_EXCLUDED_BOARDS = {
-            "hannah quotes", "lucy quotes", "brendan quotes",
-            "master production tab",
+    "hannah quotes",
+    "lucy quotes",
+    "brendan quotes",
+    "master production tab",
+    "quick links",
 }
 
 # =============================================================================
 # VIEW FILTER - only use "ALL ORDERS" views to avoid duplicates
 # =============================================================================
 ALL_ORDERS_VIEW_KEYWORD = "all orders"
+
