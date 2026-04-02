@@ -547,7 +547,7 @@ def build_morning_digest(projects):
         due_ms = parse_date_ms(due_raw)
         due_date = ms_to_date(due_ms)
 
-        if "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
+        if "PENDING ARTWORK" in status_upper or "WAITING ART" in status_upper or "PAID/WAITING" in status_upper:
             waiting_art.append({"order": order_num, "link": link, "client": client})
 
         if due_date:
@@ -572,7 +572,21 @@ def build_morning_digest(projects):
 
     s = [f"**\ud83d\udcca Project Overview** | Active Projects: **{total_active}**"]
     for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
-        emoji = "\ud83d\udfe2" if "CONFIRM" in st.upper() else "\ud83d\udfe1" if "PENDING" in st.upper() else "\u26aa"
+        su = st.upper()
+            if su in ("QUOTE NEEDED", "IN PRODUCTION", "PART SHIPPED", "SHIPPED"):
+                emoji = "🟦"
+            elif su in ("QUOTED", "PART CONFIRMED"):
+                emoji = "🟢"
+            elif su in ("PENDING ARTWORK", "ARTWORK CONFIRMED"):
+                emoji = "🟠"
+            elif su == "ON HOLD":
+                emoji = "🟡"
+            elif su in ("NEEDS REVISION", "NEEDS RESOLUTION"):
+                emoji = "🟣"
+            elif su == "CANCELLED":
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
         s.append(f"  {emoji} {st}: **{c}**")
 
     s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
@@ -679,21 +693,12 @@ def _build_alert_card(entries, window, assigned):
     color = "yellow" if window == 7 else "orange"
     title = f"Due Within {window} Days"
     lines = []
-    actions = []
     for e in entries:
         days_label = "**TODAY**" if e["days"] == 0 else f"{e['days']}d left"
         lines.append(f"**{e['order']}** \u2014 {e['client']} | In-Hand: {e['date']} | {days_label} | {e['status']}")
         lines.append(f"  [View Record]({e['link']})")
-        aid = f"request_update_{e['tid']}_{e['rid']}"
-        if _is_action_clicked(aid):
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"Acknowledged \u2713 {e['order']}"}, "type": "default", "disabled": True})
-        else:
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": f"\ud83d\udcdd Update {e['order']}"}, "type": "primary", "value": {"action": aid, "order_num": e["order"], "client": e["client"], "date": e["date"], "status": e["status"]}})
     elements = [{"tag": "markdown", "content": "\n".join(lines)}]
-    for i in range(0, len(actions), 4):
-        elements.append({"tag": "action", "actions": actions[i:i + 4]})
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
-
 
 # =========================================================================
 # FEATURE 6 - COMMENT ALERTS -> Urgent/Approvals channel
