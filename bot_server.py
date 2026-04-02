@@ -1007,10 +1007,6 @@ def check_comments_endpoint():
 
 @app.route("/debug-fields", methods=["GET"])
 def debug_fields():
-    if DIGEST_SECRET:
-        provided = request.args.get("secret", "")
-        if provided != DIGEST_SECRET:
-            return jsonify({"error": "Unauthorized"}), 401
     global _projects_cache_time
     _projects_cache_time = 0
     projects = fetch_all_projects()
@@ -1021,23 +1017,53 @@ def debug_fields():
         for k in p.keys():
             if not k.startswith("__"):
                 field_names_all.add(k)
-    sample_clean = []
-    for p in projects[:5]:
-        clean = {}
-        for k, v in p.items():
-            clean[k] = field_to_text(v)[:100]
-        sample_clean.append(clean)
-    return jsonify({"total": len(projects), "field_names": sorted(list(field_names_all)), "config_fields": {"FIELD_ORDER_NUM": FIELD_ORDER_NUM, "FIELD_STATUS": FIELD_STATUS, "FIELD_DUE_DATE": FIELD_DUE_DATE, "FIELD_CLIENT": FIELD_CLIENT}, "sample_records": sample_clean})
-
+    raw_samples = []
+    for p in projects[:15]:
+        tname = p.get("__table_name__", "")
+        if _is_excluded_board(tname):
+            continue
+        sample = {"__table__": tname}
+        for fname in [FIELD_ORDER_NUM, FIELD_STATUS, FIELD_CLIENT, FIELD_DUE_DATE]:
+            raw = p.get(fname)
+            sample["RAW_" + fname] = str(type(raw).__name__) + "|" + repr(raw)[:200] if raw is not None else "MISSING"
+        sample["parsed_order"] = get_order_num(p)
+        sample["parsed_status"] = get_status(p)
+        sample["parsed_client"] = get_client_name(p)
+        sample["parsed_due"] = str(get_due_date_raw(p))[:100]
+        raw_samples.append(sample)
+        if len(raw_samples) >= 3:
+            break
+    seen = set()
+    skip_no_order = 0
+    skip_no_status = 0
+    has_order = 0
+    has_status = 0
+    status_vals = {}
+    for p in projects:
+        on = get_order_num(p)
+        if not on:
+            skip_no_order += 1
+            continue
+        if on in seen:
+            continue
+        seen.add(on)
+        has_order += 1
+        st = get_status(p)
+        if not st:
+            skip_no_status += 1
+        else:
+            has_status += 1
+            status_vals[st] = status_vals.get(st, 0) + 1
+    return jsonify({"total": len(projects), "field_names": sorted(list(field_names_all)), "config": {"ORDER": FIELD_ORDER_NUM, "STATUS": FIELD_STATUS, "CLIENT": FIELD_CLIENT, "DUE": FIELD_DUE_DATE}, "raw_samples": raw_samples, "digest_sim": {"unique_with_order": has_order, "skip_no_order": skip_no_order, "skip_no_status": skip_no_status, "has_status": has_status, "top_statuses": dict(sorted(status_vals.items(), key=lambda x: -x[1])[:15])}})
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.1"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.2"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.1", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.2", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
