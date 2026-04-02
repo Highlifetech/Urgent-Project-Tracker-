@@ -1007,6 +1007,10 @@ def check_comments_endpoint():
 
 @app.route("/debug-fields", methods=["GET"])
 def debug_fields():
+    if DIGEST_SECRET:
+        provided = request.args.get("secret", "")
+        if provided != DIGEST_SECRET:
+            return jsonify({"error": "Unauthorized"}), 401
     global _projects_cache_time
     _projects_cache_time = 0
     projects = fetch_all_projects()
