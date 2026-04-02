@@ -677,15 +677,17 @@ def send_due_date_alerts():
         else:
             alerts_14.setdefault(assigned, []).append(entry)
     for assigned, entries in alerts_7.items():
-        card = _build_alert_card(entries, 7, assigned)
-        target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
-        if target:
-            lark.send_card(card, chat_id=target)
+        # Only send separate alert cards to Hannah/Lucy channels
+        # Brendan's alerts are already in the morning digest
+        if assigned == "Hannah" and LARK_CHAT_ID_HANNAH:
+            lark.send_card(_build_alert_card(entries, 7, assigned), chat_id=LARK_CHAT_ID_HANNAH)
+        elif assigned == "Lucy" and LARK_CHAT_ID_LUCY:
+            lark.send_card(_build_alert_card(entries, 7, assigned), chat_id=LARK_CHAT_ID_LUCY)
     for assigned, entries in alerts_14.items():
-        card = _build_alert_card(entries, 14, assigned)
-        target = LARK_CHAT_ID_HANNAH if assigned == "Hannah" else (LARK_CHAT_ID_LUCY if assigned == "Lucy" else FOUNDERS_CHAT)
-        if target:
-            lark.send_card(card, chat_id=target)
+        if assigned == "Hannah" and LARK_CHAT_ID_HANNAH:
+            lark.send_card(_build_alert_card(entries, 14, assigned), chat_id=LARK_CHAT_ID_HANNAH)
+        elif assigned == "Lucy" and LARK_CHAT_ID_LUCY:
+            lark.send_card(_build_alert_card(entries, 14, assigned), chat_id=LARK_CHAT_ID_LUCY)
     logger.info(f"Due alerts sent: {len(alerts_7)} groups (7d), {len(alerts_14)} groups (14d)")
 
 
