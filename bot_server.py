@@ -11,6 +11,8 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from lark_client import LarkClient
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -363,7 +365,7 @@ def _est_now():
 # =========================================================================
 def _find_all_orders_view(table_id):
     try:
-        views = lark.list_views(table_id)
+        views = lark.list_views(table_id) or []
         for v in views:
             vname = (v.get("view_name", "") or "").lower()
             if ALL_ORDERS_VIEW_KEYWORD in vname:
@@ -1105,12 +1107,12 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.3"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.4"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.3", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.4", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
@@ -1137,6 +1139,52 @@ if URGENT_APPROVALS_CHAT:
     threading.Thread(target=_comment_poll_loop, daemon=True).start()
     logger.info(f"Comment polling started (interval={COMMENT_POLL_INTERVAL}s)")
 
+
+# =========================================================================
+# BUILT-IN DAILY SCHEDULER (runs inside Railway, no GitHub Actions needed)
+# =========================================================================
+def _scheduled_morning_digest():
+    """Triggered by APScheduler at 8am ET Mon-Fri."""
+    logger.info("SCHEDULER: Morning digest triggered at 8am ET")
+    try:
+        global _projects_cache_time
+        _projects_cache_time = 0
+        projects = fetch_all_projects()
+        if not projects:
+            logger.error("SCHEDULER: No projects fetched")
+            return
+        digest = build_morning_digest(projects)
+        now_str = _est_now().strftime("%A, %B %d, %Y")
+        total = len(projects)
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": "\ud83c\udf05 IRON BOT MORNING BRIEFING"}, "template": "blue"},
+            "elements": [
+                {"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"},
+                {"tag": "markdown", "content": digest},
+            ],
+        }
+        chat_id = FOUNDERS_CHAT
+        if chat_id:
+            lark.send_card(card, chat_id=chat_id)
+            logger.info(f"SCHEDULER: Digest sent ({total} records)")
+        send_due_date_alerts()
+        logger.info("SCHEDULER: Due date alerts sent")
+    except Exception as e:
+        logger.error(f"SCHEDULER: Digest error: {e}")
+
+try:
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(
+        _scheduled_morning_digest,
+        CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+        id="morning_digest",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("APScheduler started: morning digest at 8:00 AM ET, Mon-Fri")
+except Exception as e:
+    logger.error(f"APScheduler setup error: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
