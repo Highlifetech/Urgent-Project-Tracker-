@@ -547,8 +547,8 @@ def build_morning_digest(projects):
         due_ms = parse_date_ms(due_raw)
         due_date = ms_to_date(due_ms)
 
-        if status_upper == "PENDING ARTWORK":
-            waiting_art.append({"order": order_num, "link": link, "client": client, "status": status, "board": tname})
+        # Note: PENDING ARTWORK is the default status in Lark, not an active artwork request
+        # Need Artwork section is kept as a placeholder for future manual flagging
 
         if due_date:
             days = (due_date - today).days
