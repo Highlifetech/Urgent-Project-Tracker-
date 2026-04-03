@@ -983,9 +983,9 @@ def morning_digest():
         provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
-    chat_id = FOUNDERS_CHAT
+    chat_id = DIGEST_CHAT or FOUNDERS_CHAT
     if not chat_id:
-        return jsonify({"error": "No founders channel configured"}), 500
+        return jsonify({"error": "No digest channel configured"}), 500
     try:
         global _projects_cache_time
         _projects_cache_time = 0
@@ -1107,12 +1107,12 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.5"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.6"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.5", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.6", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
@@ -1158,7 +1158,7 @@ def _scheduled_morning_digest():
                 {"tag": "markdown", "content": digest},
             ],
         }
-        chat_id = FOUNDERS_CHAT
+        chat_id = DIGEST_CHAT or FOUNDERS_CHAT
         if chat_id:
             lark.send_card(card, chat_id=chat_id)
             logger.info(f"SCHEDULER: Digest sent ({total} records)")
