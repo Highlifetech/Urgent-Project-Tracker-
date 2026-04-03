@@ -1107,19 +1107,18 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.4"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.5"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.4", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.5", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
-# STARTUP
+# STARTUP — guarded to prevent double-init
 # =========================================================================
-_init_db()
-threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
+_background_started = False
 
 COMMENT_POLL_INTERVAL = int(os.environ.get("COMMENT_POLL_INTERVAL", "300"))
 
@@ -1133,11 +1132,6 @@ def _comment_poll_loop():
         except Exception as e:
             logger.error(f"Comment poll loop error: {e}")
         time.sleep(COMMENT_POLL_INTERVAL)
-
-
-if URGENT_APPROVALS_CHAT:
-    threading.Thread(target=_comment_poll_loop, daemon=True).start()
-    logger.info(f"Comment polling started (interval={COMMENT_POLL_INTERVAL}s)")
 
 
 # =========================================================================
@@ -1173,20 +1167,37 @@ def _scheduled_morning_digest():
     except Exception as e:
         logger.error(f"SCHEDULER: Digest error: {e}")
 
-try:
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(
-        _scheduled_morning_digest,
-        CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
-        id="morning_digest",
-        replace_existing=True,
-    )
-    scheduler.start()
-    logger.info("APScheduler started: morning digest at 8:00 AM ET, Mon-Fri")
-except Exception as e:
-    logger.error(f"APScheduler setup error: {e}")
+
+def _start_background_tasks():
+    """Initialize DB, bot info, comment polling, and scheduler. Only runs once."""
+    global _background_started
+    if _background_started:
+        logger.info("Background tasks already started, skipping")
+        return
+    _background_started = True
+
+    _init_db()
+    threading.Thread(target=_fetch_bot_open_id, daemon=True).start()
+
+    if URGENT_APPROVALS_CHAT:
+        threading.Thread(target=_comment_poll_loop, daemon=True).start()
+        logger.info(f"Comment polling started (interval={COMMENT_POLL_INTERVAL}s)")
+
+    try:
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(
+            _scheduled_morning_digest,
+            CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            id="morning_digest",
+            replace_existing=True,
+        )
+        scheduler.start()
+        logger.info("APScheduler started: morning digest at 8:00 AM ET, Mon-Fri")
+    except Exception as e:
+        logger.error(f"APScheduler setup error: {e}")
+
 
 if __name__ == "__main__":
+    _start_background_tasks()
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
-
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
