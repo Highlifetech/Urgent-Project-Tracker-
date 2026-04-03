@@ -600,16 +600,16 @@ def build_morning_digest(projects):
 
     s.append(f"\n**\ud83d\udea8 Overdue \u2014 {len(overdue)} projects**")
     for o in overdue:
-        s.append(f"  **{o['order']}** | {o['status']} | **{abs(o['days'])} days overdue** \u2014 {o['client']} \u2014 {o['board']}")
+        s.append(f"  **{o['order']}** | {o['status']} | **{abs(o['days'])} days overdue** \u2014 {o['client']} \u2014 {o['board']} - [View]({o['link']})")
 
     s.append(f"\n**\u23f0 Due Within 7 Days \u2014 {len(due_7)} projects**")
     for d in due_7:
         label = "**TODAY**" if d["days"] == 0 else f"due in {d['days']}d"
-        s.append(f"  **{d['order']}** | {d['status']} | {label} \u2014 {d['client']} \u2014 {d['board']}")
+        s.append(f"  **{d['order']}** | {d['status']} | {label} \u2014 {d['client']} \u2014 {d['board']} - [View]({d['link']})")
 
     s.append(f"\n**\ud83d\udcc5 Due Within 14 Days \u2014 {len(due_14)} projects**")
     for d in due_14:
-        s.append(f"  **{d['order']}** | {d['status']} | due in {d['days']}d \u2014 {d['client']} \u2014 {d['board']}")
+        s.append(f"  **{d['order']}** | {d['status']} | due in {d['days']}d \u2014 {d['client']} \u2014 {d['board']} - [View]({d['link']})")
 
     digest = "\n".join(s)
 
@@ -1107,12 +1107,12 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.6"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.7"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.6", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.7", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
 
 
 # =========================================================================
