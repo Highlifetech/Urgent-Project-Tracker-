@@ -979,10 +979,16 @@ def update_team_endpoint(table_id, record_id):
 
 @app.route("/morning-digest", methods=["POST", "GET"])
 def morning_digest():
+    global _last_digest_sent
     if DIGEST_SECRET:
         provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
+    now_ts = time.time()
+    if now_ts - _last_digest_sent < 3600:
+        logger.info(f"HTTP /morning-digest: Already sent {int(now_ts - _last_digest_sent)}s ago, skipping duplicate")
+        return jsonify({"status": "skipped", "reason": "digest already sent within the last hour"}), 200
+    _last_digest_sent = now_ts
     chat_id = DIGEST_CHAT or FOUNDERS_CHAT
     if not chat_id:
         return jsonify({"error": "No digest channel configured"}), 500
@@ -1119,6 +1125,7 @@ def index():
 # STARTUP — guarded to prevent double-init
 # =========================================================================
 _background_started = False
+_last_digest_sent = 0  # Unix timestamp of last digest send (dedup guard)
 
 COMMENT_POLL_INTERVAL = int(os.environ.get("COMMENT_POLL_INTERVAL", "300"))
 
@@ -1139,6 +1146,12 @@ def _comment_poll_loop():
 # =========================================================================
 def _scheduled_morning_digest():
     """Triggered by APScheduler at 8am ET Mon-Fri."""
+    global _last_digest_sent
+    now_ts = time.time()
+    if now_ts - _last_digest_sent < 3600:
+        logger.info(f"SCHEDULER: Digest already sent {int(now_ts - _last_digest_sent)}s ago, skipping duplicate")
+        return
+    _last_digest_sent = now_ts
     logger.info("SCHEDULER: Morning digest triggered at 8am ET")
     try:
         global _projects_cache_time
