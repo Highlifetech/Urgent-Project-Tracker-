@@ -503,6 +503,83 @@ def handle_update_team_button(table_id, record_id):
 
 
 # =========================================================================
+# FEATURE 2B - PROJECT UPDATE REQUEST CARD -> Hannah/Lucy with Mark Resolved
+# =========================================================================
+
+def build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name=""):
+    """Card asking team member to provide an update, with a Mark Resolved button."""
+    link = record_link(table_id, record_id)
+    action_id = f"project_update_resolved_{table_id}_{record_id}"
+
+    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+
+    elements = [
+        {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+    ]
+
+    add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default", "url": link}
+
+    if _is_action_clicked(action_id):
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+    else:
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+
+    elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
+
+    from_label = table_name or "PRODUCTION"
+    elements.append({"tag": "markdown", "content": f"From [2026 {from_label.upper()}]({link})"})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
+        "elements": elements,
+    }
+
+
+def handle_request_update_button(table_id, record_id):
+    """Send a Project Update Request card to the assigned person's channel."""
+    try:
+        record = lark.get_record(table_id, record_id)
+        fields = record.get("fields", {})
+        order_num = get_order_num(fields)
+        assigned_to = get_assigned_to(fields)
+        if assigned_to == "Brendan":
+            tables = lark.get_all_tables()
+            for t in tables:
+                if t.get("table_id") == table_id:
+                    assigned_to = get_assigned_from_table(t.get("name", ""))
+                    break
+
+        table_name = ""
+        try:
+            tables = lark.get_all_tables()
+            for t in tables:
+                if t.get("table_id") == table_id:
+                    table_name = t.get("name", "")
+                    break
+        except Exception:
+            pass
+
+        card = build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name)
+
+        if assigned_to == "Hannah":
+            target = LARK_CHAT_ID_HANNAH
+        elif assigned_to == "Lucy":
+            target = LARK_CHAT_ID_LUCY
+        else:
+            target = FOUNDERS_CHAT
+
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info(f"Project Update Request sent for {order_num} to {assigned_to} channel")
+
+        return {"status": "ok", "order": order_num}
+    except Exception as e:
+        logger.error(f"Request Update error: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+# =========================================================================
 # FEATURE 3 - MORNING DIGEST (uses flexible field lookups)
 # =========================================================================
 def build_morning_digest(projects):
@@ -805,6 +882,18 @@ def handle_card_callback(body):
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
+    if action_str.startswith("project_update_resolved_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already resolved"}}
+        _mark_action_clicked(action_str, operator_name)
+        order_num = action_value.get("order_num", "")
+        assigned_to = action_value.get("assigned_to", "")
+        if FOUNDERS_CHAT:
+            now_str = _est_now().strftime("%I:%M %p ET, %b %d")
+            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Update Request Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the update request for **{order_num}** \u2014 {now_str}"}]}
+            lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
+        return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
+
     if action_str.startswith("request_update_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already acknowledged"}}
@@ -975,6 +1064,10 @@ def notify_endpoint(table_id, record_id):
 @app.route("/update-team/<table_id>/<record_id>", methods=["POST", "GET"])
 def update_team_endpoint(table_id, record_id):
     return jsonify(handle_update_team_button(table_id, record_id))
+
+@app.route("/request-update/<table_id>/<record_id>", methods=["POST", "GET"])
+def request_update_endpoint(table_id, record_id):
+    return jsonify(handle_request_update_button(table_id, record_id))
 
 
 @app.route("/morning-digest", methods=["POST", "GET"])
