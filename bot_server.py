@@ -1300,62 +1300,112 @@ def _is_already_processed(message_id):
 
 
 # =========================================================================
-# FEATURE 7 - AUTO-REPLY Mark Resolved button on Project Update Request cards
+# FEATURE 7 - POLL & AUTO-REPLY Mark Resolved on Project Update Request cards
 # =========================================================================
-def _handle_incoming_card(msg):
-    """Detect 'Project Update Request' cards from Lark Base automations
-    and reply with a Mark Resolved button card."""
-    message_id = msg.get("message_id", "")
-    chat_id = msg.get("chat_id", "")
-    body_content = msg.get("body", {}).get("content", "{}")
-    try:
-        card = json.loads(body_content) if isinstance(body_content, str) else body_content
-    except Exception:
-        return
-    # Check if this is a Project Update Request card
-    header = card.get("header", {})
-    title = header.get("title", {})
-    title_content = title.get("content", "") if isinstance(title, dict) else ""
-    if "Project Update Request" not in title_content:
-        return
-    # Extract order number from card elements
-    order_num = ""
-    for elem in card.get("elements", []):
-        md = elem.get("content", "")
-        if md and "status of order" in md:
-            match = re.search(r"#([A-Za-z0-9\-]+)", md)
-            if match:
-                order_num = "#" + match.group(1)
-                break
-    if not order_num:
-        logger.warning(f"Project Update Request card detected but no order number found in {message_id}")
-        return
-    logger.info(f"Detected Project Update Request card for {order_num} in chat {chat_id}, adding Mark Resolved reply")
-    # Determine assigned_to based on which channel it was sent to
-    assigned_to = "Team"
-    if chat_id == LARK_CHAT_ID_HANNAH:
-        assigned_to = "Hannah"
-    elif chat_id == LARK_CHAT_ID_LUCY:
-        assigned_to = "Lucy"
-    # Build a reply card with the Mark Resolved button
-    action_id = f"mark_resolved_auto_{chat_id}_{order_num}_{message_id[-8:]}"
-    resolve_btn_card = {
-        "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": f"\u2705 {order_num} \u2014 Mark Resolved"}, "template": "green"},
-        "elements": [
-            {"tag": "markdown", "content": f"When you have provided your update for **{order_num}**, click below to notify Brendan."},
-            {"tag": "action", "actions": [
-                {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary",
-                 "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}},
-            ]},
-        ],
-    }
-    try:
-        lark.reply_card(message_id, resolve_btn_card)
-        logger.info(f"Mark Resolved reply sent for {order_num}")
-    except Exception as e:
-        logger.error(f"Failed to reply with Mark Resolved card for {order_num}: {e}")
+_replied_card_ids = set()  # Track message_ids we've already replied to (in-memory)
 
+def _is_card_replied(message_id):
+    """Check if we already replied to this card (DB-backed with in-memory cache)."""
+    if message_id in _replied_card_ids:
+        return True
+    action_id = f"card_replied_{message_id}"
+    if _is_action_clicked(action_id):
+        _replied_card_ids.add(message_id)
+        return True
+    return False
+
+def _mark_card_replied(message_id):
+    """Mark a card as replied to (DB + in-memory)."""
+    _replied_card_ids.add(message_id)
+    action_id = f"card_replied_{message_id}"
+    _mark_action_clicked(action_id, "iron_bot")
+
+def _poll_update_request_cards():
+    """Check Hannah & Lucy channels for recent Project Update Request cards
+    from Lark Base, and reply with Mark Resolved button."""
+    channels = []
+    if LARK_CHAT_ID_HANNAH:
+        channels.append(("Hannah", LARK_CHAT_ID_HANNAH))
+    if LARK_CHAT_ID_LUCY:
+        channels.append(("Lucy", LARK_CHAT_ID_LUCY))
+    if not channels:
+        return
+    # Look at messages from the last 10 minutes
+    now_ts = int(time.time())
+    start_ts = str(now_ts - 600)
+    end_ts = str(now_ts)
+    total_replied = 0
+    for assigned_to, chat_id in channels:
+        try:
+            messages = lark.get_chat_history(chat_id, start_time=start_ts, end_time=end_ts, limit=50)
+        except Exception as e:
+            logger.error(f"Poll cards error ({assigned_to}): {e}")
+            continue
+        for msg in messages:
+            msg_type = msg.get("msg_type", "")
+            if msg_type != "interactive":
+                continue
+            message_id = msg.get("message_id", "")
+            if not message_id:
+                continue
+            # Skip if already replied
+            if _is_card_replied(message_id):
+                continue
+            # Skip messages from Iron Bot itself
+            sender = msg.get("sender", {})
+            sender_id = sender.get("id", "")
+            if BOT_OPEN_ID and sender_id == BOT_OPEN_ID:
+                _mark_card_replied(message_id)
+                continue
+            # Parse card content
+            body_content = msg.get("body", {}).get("content", "{}")
+            try:
+                card = json.loads(body_content) if isinstance(body_content, str) else body_content
+            except Exception:
+                _mark_card_replied(message_id)
+                continue
+            # Check if this is a Project Update Request card
+            header = card.get("header", {})
+            title = header.get("title", {})
+            title_content = title.get("content", "") if isinstance(title, dict) else ""
+            if "Project Update Request" not in title_content:
+                _mark_card_replied(message_id)
+                continue
+            # Extract order number
+            order_num = ""
+            for elem in card.get("elements", []):
+                md = elem.get("content", "")
+                if md and "status of order" in md:
+                    match = re.search(r"#([A-Za-z0-9\\-]+)", md)
+                    if match:
+                        order_num = "#" + match.group(1)
+                        break
+            if not order_num:
+                _mark_card_replied(message_id)
+                continue
+            logger.info(f"Found Project Update Request for {order_num} in {assigned_to} channel, sending Mark Resolved reply")
+            # Build & send reply card with Mark Resolved button
+            action_id = f"mark_resolved_auto_{chat_id}_{order_num}_{message_id[-8:]}"
+            resolve_btn_card = {
+                "config": {"wide_screen_mode": True},
+                "header": {"title": {"tag": "plain_text", "content": f"\u2705 {order_num} \u2014 Mark Resolved"}, "template": "green"},
+                "elements": [
+                    {"tag": "markdown", "content": f"When you have provided your update for **{order_num}**, click below to notify Brendan."},
+                    {"tag": "action", "actions": [
+                        {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary",
+                         "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}},
+                    ]},
+                ],
+            }
+            try:
+                lark.reply_card(message_id, resolve_btn_card)
+                total_replied += 1
+                logger.info(f"Mark Resolved reply sent for {order_num} (msg {message_id})")
+            except Exception as e:
+                logger.error(f"Reply card error for {order_num}: {e}")
+            _mark_card_replied(message_id)
+    if total_replied:
+        logger.info(f"Poll cards: replied to {total_replied} Project Update Request card(s)")
 
 # =========================================================================
 # FLASK ROUTES
@@ -1600,6 +1650,11 @@ def _comment_poll_loop():
             check_new_comments()
         except Exception as e:
             logger.error(f"Comment poll loop error: {e}")
+        # Also poll for Project Update Request cards to add Mark Resolved buttons
+        try:
+            _poll_update_request_cards()
+        except Exception as e:
+            logger.error(f"Poll update request cards error: {e}")
         time.sleep(COMMENT_POLL_INTERVAL)
 
 
