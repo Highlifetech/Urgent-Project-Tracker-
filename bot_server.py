@@ -468,18 +468,35 @@ def handle_notify_button(table_id, record_id):
 # =========================================================================
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
-def build_update_team_card(order_num, description, assigned_to, table_id, record_id):
+def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name=""):
+    """Project Update Request card — matches the purple card style sent to Hannah/Lucy.
+    Includes Add Update + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
-    elements = [{"tag": "markdown", "content": f"**Sales Order:** {order_num}\n**Description:** {description}"}]
-    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\ud83d\udcce View Record"}, "type": "default", "url": link}
+
+    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+
+    elements = [
+        {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+    ]
+
+    add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default", "url": link}
+
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
-    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
-    return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83d\udce9 Project Update \u2014 {order_num}"}, "template": "purple"}, "elements": elements}
 
+    elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
+
+    from_label = table_name or "PRODUCTION"
+    elements.append({"tag": "markdown", "content": f"From [2026 {from_label.upper()}]({link})"})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
+        "elements": elements,
+    }
 
 def handle_update_team_button(table_id, record_id):
     try:
@@ -488,13 +505,24 @@ def handle_update_team_button(table_id, record_id):
         order_num = get_order_num(fields)
         description = field_to_text(fields.get(FIELD_DESCRIPTION, ""))
         assigned_to = get_assigned_to(fields)
+        table_name = ""
         if assigned_to == "Brendan":
             tables = lark.get_all_tables()
             for t in tables:
                 if t.get("table_id") == table_id:
                     assigned_to = get_assigned_from_table(t.get("name", ""))
+                    table_name = t.get("name", "")
                     break
-        card = build_update_team_card(order_num, description, assigned_to, table_id, record_id)
+        if not table_name:
+            try:
+                tables = lark.get_all_tables()
+                for t in tables:
+                    if t.get("table_id") == table_id:
+                        table_name = t.get("name", "")
+                        break
+            except Exception:
+                pass
+        card = build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name)
         if assigned_to == "Hannah":
             target = LARK_CHAT_ID_HANNAH
         elif assigned_to == "Lucy":
