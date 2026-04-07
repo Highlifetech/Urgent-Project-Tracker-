@@ -1300,6 +1300,64 @@ def _is_already_processed(message_id):
 
 
 # =========================================================================
+# FEATURE 7 - AUTO-REPLY Mark Resolved button on Project Update Request cards
+# =========================================================================
+def _handle_incoming_card(msg):
+    """Detect 'Project Update Request' cards from Lark Base automations
+    and reply with a Mark Resolved button card."""
+    message_id = msg.get("message_id", "")
+    chat_id = msg.get("chat_id", "")
+    body_content = msg.get("body", {}).get("content", "{}")
+    try:
+        card = json.loads(body_content) if isinstance(body_content, str) else body_content
+    except Exception:
+        return
+    # Check if this is a Project Update Request card
+    header = card.get("header", {})
+    title = header.get("title", {})
+    title_content = title.get("content", "") if isinstance(title, dict) else ""
+    if "Project Update Request" not in title_content:
+        return
+    # Extract order number from card elements
+    order_num = ""
+    for elem in card.get("elements", []):
+        md = elem.get("content", "")
+        if md and "status of order" in md:
+            match = re.search(r"#([A-Za-z0-9\-]+)", md)
+            if match:
+                order_num = "#" + match.group(1)
+                break
+    if not order_num:
+        logger.warning(f"Project Update Request card detected but no order number found in {message_id}")
+        return
+    logger.info(f"Detected Project Update Request card for {order_num} in chat {chat_id}, adding Mark Resolved reply")
+    # Determine assigned_to based on which channel it was sent to
+    assigned_to = "Team"
+    if chat_id == LARK_CHAT_ID_HANNAH:
+        assigned_to = "Hannah"
+    elif chat_id == LARK_CHAT_ID_LUCY:
+        assigned_to = "Lucy"
+    # Build a reply card with the Mark Resolved button
+    action_id = f"mark_resolved_auto_{chat_id}_{order_num}_{message_id[-8:]}"
+    resolve_btn_card = {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": f"\u2705 {order_num} \u2014 Mark Resolved"}, "template": "green"},
+        "elements": [
+            {"tag": "markdown", "content": f"When you have provided your update for **{order_num}**, click below to notify Brendan."},
+            {"tag": "action", "actions": [
+                {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary",
+                 "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}},
+            ]},
+        ],
+    }
+    try:
+        lark.reply_card(message_id, resolve_btn_card)
+        logger.info(f"Mark Resolved reply sent for {order_num}")
+    except Exception as e:
+        logger.error(f"Failed to reply with Mark Resolved card for {order_num}: {e}")
+
+
+# =========================================================================
 # FLASK ROUTES
 # =========================================================================
 @app.route("/webhook", methods=["POST"])
@@ -1313,10 +1371,19 @@ def webhook():
     msg = event.get("message", {})
     msg_type = msg.get("message_type", "")
     sender = event.get("sender", {})
-    if event_type != "im.message.receive_v1" or msg_type != "text":
+    if event_type != "im.message.receive_v1":
         return jsonify({"code": 0})
     message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
+        return jsonify({"code": 0})
+    # Handle interactive (card) messages — detect Project Update Request from Lark Base
+    if msg_type == "interactive":
+        sender_type = sender.get("sender_type", "")
+        sender_id = sender.get("sender_id", {}).get("open_id", "")
+        if sender_type == "app" and sender_id != BOT_OPEN_ID:
+            threading.Thread(target=_handle_incoming_card, args=(msg,), daemon=True).start()
+        return jsonify({"code": 0})
+    if msg_type != "text":
         return jsonify({"code": 0})
     user_text = extract_question(msg)
     if not user_text:
@@ -1328,7 +1395,6 @@ def webhook():
     scope = get_user_scope(sender_open_id)
     threading.Thread(target=_process_message, args=(user_text, chat_id, scope, sender_open_id), daemon=True).start()
     return jsonify({"code": 0})
-
 
 @app.route("/card-callback", methods=["POST"])
 def card_callback():
