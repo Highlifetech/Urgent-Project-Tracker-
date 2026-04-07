@@ -49,6 +49,7 @@ LARK_CHAT_ID_QUOTES_LUCY = os.environ.get("LARK_CHAT_ID_QUOTES_LUCY", "")
 LARK_CHAT_ID_SAMPLES_LUCY = os.environ.get("LARK_CHAT_ID_SAMPLES_LUCY", "")
 LARK_CHAT_ID_HLT_CARLO = os.environ.get("LARK_CHAT_ID_HLT_CARLO", "")
 LARK_CHAT_ID_HLT_INBOUND = os.environ.get("LARK_CHAT_ID_HLT_INBOUND", "")
+LARK_CHAT_ID_BRIEANNE = os.environ.get("LARK_CHAT_ID_BRIEANNE", "")
 
 # =============================================================================
 # AI
