@@ -782,6 +782,206 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon)
+# =========================================================================
+
+def _fetch_channel_messages(chat_id, start_ts, end_ts):
+    """Fetch messages from a Lark chat between two Unix-second timestamps.
+    Returns list of {sender, text, time_str} dicts (skips bot messages).
+    """
+    messages = []
+    try:
+        raw = lark.get_chat_history(chat_id, start_time=str(start_ts), end_time=str(end_ts), limit=200)
+        for msg in raw:
+            sender_id = msg.get("sender", {}).get("id", "")
+            sender_type = msg.get("sender", {}).get("sender_type", "")
+            if sender_type == "app":
+                continue  # skip bot messages
+            sender_name = get_user_name(sender_id) if sender_id else "Unknown"
+            msg_type = msg.get("msg_type", "")
+            body_content = msg.get("body", {}).get("content", "{}")
+            try:
+                parsed = json.loads(body_content) if isinstance(body_content, str) else body_content
+            except Exception:
+                parsed = {}
+            if msg_type == "text":
+                text = parsed.get("text", "")
+            elif msg_type == "post":
+                # Rich text - extract title + text
+                post = parsed.get("en_us", parsed.get("zh_cn", {}))
+                title = post.get("title", "")
+                parts = []
+                for block in post.get("content", []):
+                    for seg in block:
+                        parts.append(seg.get("text", ""))
+                text = (title + " " + " ".join(parts)).strip()
+            elif msg_type == "interactive":
+                # Card messages - extract header + markdown
+                try:
+                    card = json.loads(parsed) if isinstance(parsed, str) else parsed
+                    header_text = card.get("header", {}).get("title", {}).get("content", "")
+                    elem_texts = []
+                    for elem in card.get("elements", []):
+                        if elem.get("tag") == "markdown":
+                            elem_texts.append(elem.get("content", ""))
+                    text = (header_text + " " + " ".join(elem_texts)).strip()
+                except Exception:
+                    text = "[card message]"
+            else:
+                text = f"[{msg_type} message]"
+            if text.strip():
+                create_time = msg.get("create_time", "")
+                try:
+                    ts = int(create_time) / 1000 if len(create_time) > 10 else int(create_time)
+                    from zoneinfo import ZoneInfo
+                    dt = datetime.fromtimestamp(ts, tz=ZoneInfo("America/New_York"))
+                    time_str = dt.strftime("%I:%M %p")
+                except Exception:
+                    time_str = ""
+                messages.append({"sender": sender_name, "text": text[:500], "time_str": time_str})
+    except Exception as e:
+        logger.error(f"Fetch channel messages error ({chat_id}): {e}")
+    return messages
+
+
+def _summarize_messages_with_ai(hannah_msgs, lucy_msgs, period_label, projects_context=""):
+    """Use Claude to summarize messages and build a to-do list for Brendan."""
+    if not hannah_msgs and not lucy_msgs:
+        return None
+
+    # Build the message transcript
+    transcript_parts = []
+    if hannah_msgs:
+        transcript_parts.append("=== HANNAH'S CHANNEL ===")
+        for m in hannah_msgs:
+            time_label = f" ({m['time_str']})" if m.get("time_str") else ""
+            transcript_parts.append(f"{m['sender']}{time_label}: {m['text']}")
+    if lucy_msgs:
+        transcript_parts.append("\n=== LUCY'S CHANNEL ===")
+        for m in lucy_msgs:
+            time_label = f" ({m['time_str']})" if m.get("time_str") else ""
+            transcript_parts.append(f"{m['sender']}{time_label}: {m['text']}")
+
+    transcript = "\n".join(transcript_parts)
+
+    prompt = f"""Here are messages from Hannah's and Lucy's production channels ({period_label}).
+
+{transcript}
+
+{f"Project context: {projects_context}" if projects_context else ""}
+
+Please provide:
+1. **Message Summary** — A concise summary of what Hannah and Lucy discussed/reported. Group by person. Highlight any issues, blockers, completed work, or decisions made. Keep it brief and scannable.
+2. **Brendan's To-Do List** — Based on these messages, create a prioritized to-do list for Brendan (the founder). Include things that need his attention, approval, follow-up, or decision. Mark urgent items. If nothing needs his attention, say so.
+
+Format clearly with markdown headers."""
+
+    try:
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            system="You are Iron Bot, HLT's production assistant. You summarize team messages and extract actionable items for Brendan, the founder. Be direct, concise, and prioritize what matters.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        logger.error(f"AI message summary error: {e}")
+        return None
+
+
+def _build_message_summary_card(summary_text, period_label, hannah_count, lucy_count):
+    """Build a Lark card for the message summary."""
+    emoji = "\ud83c\udf19" if "overnight" in period_label.lower() else "\u2600\ufe0f"
+    template = "indigo" if "overnight" in period_label.lower() else "orange"
+
+    stats_line = f"Hannah's channel: **{hannah_count}** messages | Lucy's channel: **{lucy_count}** messages"
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": f"{emoji} {period_label}"}, "template": template},
+        "elements": [
+            {"tag": "markdown", "content": stats_line + "\n---"},
+            {"tag": "markdown", "content": summary_text},
+        ],
+    }
+
+
+def send_message_summary(period="overnight"):
+    """Fetch messages from Hannah/Lucy channels, summarize, and send to digest channel.
+    period: 'overnight' (8pm-8am) or 'daytime' (8am-5pm)
+    """
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    now = datetime.now(et)
+
+    if period == "overnight":
+        # 8pm yesterday to 8am today
+        yesterday_8pm = now.replace(hour=20, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        start_ts = int(yesterday_8pm.timestamp())
+        end_ts = int(today_8am.timestamp())
+        period_label = "Overnight Message Summary (8 PM \u2014 8 AM)"
+    else:
+        # 8am today to 5pm today
+        today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        today_5pm = now.replace(hour=17, minute=0, second=0, microsecond=0)
+        start_ts = int(today_8am.timestamp())
+        end_ts = int(today_5pm.timestamp())
+        period_label = "Daytime Message Summary (8 AM \u2014 5 PM)"
+
+    logger.info(f"Message summary [{period}]: fetching {start_ts} to {end_ts}")
+
+    hannah_msgs = _fetch_channel_messages(LARK_CHAT_ID_HANNAH, start_ts, end_ts) if LARK_CHAT_ID_HANNAH else []
+    lucy_msgs = _fetch_channel_messages(LARK_CHAT_ID_LUCY, start_ts, end_ts) if LARK_CHAT_ID_LUCY else []
+
+    logger.info(f"Message summary [{period}]: Hannah={len(hannah_msgs)}, Lucy={len(lucy_msgs)}")
+
+    if not hannah_msgs and not lucy_msgs:
+        logger.info(f"Message summary [{period}]: No messages found, skipping")
+        return {"status": "no_messages", "hannah": 0, "lucy": 0}
+
+    # Get brief project context for smarter to-do generation
+    projects_context = ""
+    try:
+        projects = fetch_all_projects()
+        overdue_count = 0
+        due_soon_count = 0
+        today = datetime.now(timezone.utc).date()
+        seen = set()
+        for p in projects:
+            on = get_order_num(p)
+            if not on or on in seen:
+                continue
+            seen.add(on)
+            status = get_status(p).upper()
+            if any(s in status for s in ("SHIPPED", "RESOLVED", "CANCELLED")):
+                continue
+            due_ms = parse_date_ms(get_due_date_raw(p))
+            due_date = ms_to_date(due_ms)
+            if due_date:
+                days = (due_date - today).days
+                if days < 0:
+                    overdue_count += 1
+                elif days <= 7:
+                    due_soon_count += 1
+        projects_context = f"{len(seen)} active orders, {overdue_count} overdue, {due_soon_count} due within 7 days"
+    except Exception:
+        pass
+
+    summary = _summarize_messages_with_ai(hannah_msgs, lucy_msgs, period_label, projects_context)
+    if not summary:
+        return {"status": "ai_error", "hannah": len(hannah_msgs), "lucy": len(lucy_msgs)}
+
+    card = _build_message_summary_card(summary, period_label, len(hannah_msgs), len(lucy_msgs))
+    target = DIGEST_CHAT or FOUNDERS_CHAT
+    if target:
+        lark.send_card(card, chat_id=target)
+        logger.info(f"Message summary [{period}] sent to digest channel")
+
+    return {"status": "ok", "hannah": len(hannah_msgs), "lucy": len(lucy_msgs)}
+
+
+# =========================================================================
 # FEATURE 6 - COMMENT ALERTS -> Urgent/Approvals channel
 # =========================================================================
 def check_new_comments():
@@ -1097,10 +1297,30 @@ def morning_digest():
         card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\ud83c\udf05 IRON BOT MORNING BRIEFING"}, "template": "blue"}, "elements": [{"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"}, {"tag": "markdown", "content": digest}]}
         lark.send_card(card, chat_id=chat_id)
         send_due_date_alerts()
+
+        # Also send overnight message summary with the digest
+        try:
+            send_message_summary(period="overnight")
+        except Exception as e:
+            logger.error(f"Digest overnight summary error: {e}")
+
         return jsonify({"status": "ok", "records": total})
     except Exception as e:
         logger.error(f"Digest error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/message-summary", methods=["POST", "GET"])
+def message_summary_endpoint():
+    if DIGEST_SECRET:
+        provided = request.headers.get("X-Digest-Secret", "") or request.args.get("secret", "")
+        if provided != DIGEST_SECRET:
+            return jsonify({"error": "Unauthorized"}), 401
+    period = request.args.get("period", "overnight")
+    if period not in ("overnight", "daytime"):
+        return jsonify({"error": "period must be 'overnight' or 'daytime'"}), 400
+    result = send_message_summary(period=period)
+    return jsonify(result)
 
 
 @app.route("/check-comments", methods=["POST", "GET"])
@@ -1206,12 +1426,12 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.7"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.8"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.7", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.8", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries"]})
 
 
 # =========================================================================
@@ -1270,8 +1490,25 @@ def _scheduled_morning_digest():
             logger.info(f"SCHEDULER: Digest sent ({total} records)")
         send_due_date_alerts()
         logger.info("SCHEDULER: Due date alerts sent")
+
+        # Send overnight message summary alongside morning digest
+        try:
+            send_message_summary(period="overnight")
+            logger.info("SCHEDULER: Overnight message summary sent")
+        except Exception as e:
+            logger.error(f"SCHEDULER: Overnight summary error: {e}")
     except Exception as e:
         logger.error(f"SCHEDULER: Digest error: {e}")
+
+
+def _scheduled_afternoon_recap():
+    """Triggered by APScheduler at 5pm ET Mon-Fri."""
+    logger.info("SCHEDULER: Afternoon recap triggered at 5pm ET")
+    try:
+        send_message_summary(period="daytime")
+        logger.info("SCHEDULER: Afternoon message summary sent")
+    except Exception as e:
+        logger.error(f"SCHEDULER: Afternoon summary error: {e}")
 
 
 def _start_background_tasks():
@@ -1297,8 +1534,14 @@ def _start_background_tasks():
             id="morning_digest",
             replace_existing=True,
         )
+        scheduler.add_job(
+            _scheduled_afternoon_recap,
+            CronTrigger(hour=17, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            id="afternoon_recap",
+            replace_existing=True,
+        )
         scheduler.start()
-        logger.info("APScheduler started: morning digest at 8:00 AM ET, Mon-Fri")
+        logger.info("APScheduler started: morning digest 8AM + afternoon recap 5PM ET, Mon-Fri")
     except Exception as e:
         logger.error(f"APScheduler setup error: {e}")
 
