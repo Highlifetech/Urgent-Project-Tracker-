@@ -32,6 +32,12 @@ from config import (
     LARK_CHAT_ID_DIGEST, DIGEST_SECRET,
     ALL_ORDERS_VIEW_KEYWORD,
     ALT_ORDER_NUM_FIELDS, ALT_CLIENT_FIELDS, ALT_STATUS_FIELDS, ALT_DUE_DATE_FIELDS,
+    LARK_CHAT_ID_CHEN, LARK_CHAT_ID_HANNAH_ARTWORK, LARK_CHAT_ID_LUCY_ARTWORK,
+    LARK_CHAT_ID_HLT_DESIGN, LARK_CHAT_ID_ORDER_ISSUES_HANNAH,
+    LARK_CHAT_ID_ORDER_ISSUES_LUCY, LARK_CHAT_ID_QUOTES_HANNAH,
+    LARK_CHAT_ID_QUOTES_LUCY, LARK_CHAT_ID_SAMPLES_LUCY,
+    LARK_CHAT_ID_SHIPMENTS_LUCY, LARK_CHAT_ID_HLT_CARLO,
+    LARK_CHAT_ID_HLT_INBOUND,
 )
 
 FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
@@ -42,6 +48,8 @@ URGENT_APPROVALS_CHAT = os.environ.get("LARK_CHAT_ID_URGENT_APPROVALS", "")
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
 BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "")
+
+LARK_CHAT_ID_BRIEANNE = os.environ.get("LARK_CHAT_ID_BRIEANNE", "")
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 lark = LarkClient()
@@ -782,8 +790,34 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
-# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon)
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) — ALL CHANNELS
 # =========================================================================
+
+# All channels to scan for message summaries (label -> chat_id)
+def _get_summary_channels():
+    """Return dict of channel_label -> chat_id for all monitored channels."""
+    channels = {}
+    _add = lambda label, cid: channels.update({label: cid}) if cid else None
+    _add("Hannah Production", LARK_CHAT_ID_HANNAH)
+    _add("Lucy Production", LARK_CHAT_ID_LUCY)
+    _add("Chen Production", LARK_CHAT_ID_CHEN)
+    _add("Carlo", LARK_CHAT_ID_HLT_CARLO)
+    _add("Brieanne", LARK_CHAT_ID_BRIEANNE)
+    _add("Hannah Artwork", LARK_CHAT_ID_HANNAH_ARTWORK)
+    _add("Lucy Artwork", LARK_CHAT_ID_LUCY_ARTWORK)
+    _add("Design", LARK_CHAT_ID_HLT_DESIGN)
+    _add("Hannah Order Issues", LARK_CHAT_ID_ORDER_ISSUES_HANNAH)
+    _add("Lucy Order Issues", LARK_CHAT_ID_ORDER_ISSUES_LUCY)
+    _add("Hannah Quotes", LARK_CHAT_ID_QUOTES_HANNAH)
+    _add("Lucy Quotes", LARK_CHAT_ID_QUOTES_LUCY)
+    _add("Lucy Samples", LARK_CHAT_ID_SAMPLES_LUCY)
+    _add("Lucy Shipments", LARK_CHAT_ID_SHIPMENTS_LUCY)
+    _add("Inbound", LARK_CHAT_ID_HLT_INBOUND)
+    _add("Founders", FOUNDERS_CHAT)
+    _add("Updates", UPDATES_CHAT)
+    _add("Urgent Approvals", URGENT_APPROVALS_CHAT)
+    return channels
+
 
 def _fetch_channel_messages(chat_id, start_ts, end_ts):
     """Fetch messages from a Lark chat between two Unix-second timestamps.
@@ -807,7 +841,6 @@ def _fetch_channel_messages(chat_id, start_ts, end_ts):
             if msg_type == "text":
                 text = parsed.get("text", "")
             elif msg_type == "post":
-                # Rich text - extract title + text
                 post = parsed.get("en_us", parsed.get("zh_cn", {}))
                 title = post.get("title", "")
                 parts = []
@@ -816,7 +849,6 @@ def _fetch_channel_messages(chat_id, start_ts, end_ts):
                         parts.append(seg.get("text", ""))
                 text = (title + " " + " ".join(parts)).strip()
             elif msg_type == "interactive":
-                # Card messages - extract header + markdown
                 try:
                     card = json.loads(parsed) if isinstance(parsed, str) else parsed
                     header_text = card.get("header", {}).get("title", {}).get("content", "")
@@ -844,43 +876,54 @@ def _fetch_channel_messages(chat_id, start_ts, end_ts):
     return messages
 
 
-def _summarize_messages_with_ai(hannah_msgs, lucy_msgs, period_label, projects_context=""):
-    """Use Claude to summarize messages and build a to-do list for Brendan."""
-    if not hannah_msgs and not lucy_msgs:
+def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context=""):
+    """Use Claude to summarize messages from all channels and build a to-do list for Brendan."""
+    total = sum(len(msgs) for msgs in all_channel_msgs.values())
+    if total == 0:
         return None
 
-    # Build the message transcript
+    # Build the message transcript grouped by channel
     transcript_parts = []
-    if hannah_msgs:
-        transcript_parts.append("=== HANNAH'S CHANNEL ===")
-        for m in hannah_msgs:
+    for channel_label, msgs in all_channel_msgs.items():
+        if not msgs:
+            continue
+        transcript_parts.append(f"=== {channel_label.upper()} ({len(msgs)} messages) ===")
+        for m in msgs:
             time_label = f" ({m['time_str']})" if m.get("time_str") else ""
             transcript_parts.append(f"{m['sender']}{time_label}: {m['text']}")
-    if lucy_msgs:
-        transcript_parts.append("\n=== LUCY'S CHANNEL ===")
-        for m in lucy_msgs:
-            time_label = f" ({m['time_str']})" if m.get("time_str") else ""
-            transcript_parts.append(f"{m['sender']}{time_label}: {m['text']}")
+        transcript_parts.append("")
 
     transcript = "\n".join(transcript_parts)
+    # Truncate if too long for the API
+    if len(transcript) > 30000:
+        transcript = transcript[:30000] + "\n... [truncated]"
 
-    prompt = f"""Here are messages from Hannah's and Lucy's production channels ({period_label}).
+    prompt = f"""Here are messages from HLT team channels ({period_label}).
 
 {transcript}
 
-{f"Project context: {projects_context}" if projects_context else ""}
+{f"Current project status: {projects_context}" if projects_context else ""}
 
 Please provide:
-1. **Message Summary** — A concise summary of what Hannah and Lucy discussed/reported. Group by person. Highlight any issues, blockers, completed work, or decisions made. Keep it brief and scannable.
-2. **Brendan's To-Do List** — Based on these messages, create a prioritized to-do list for Brendan (the founder). Include things that need his attention, approval, follow-up, or decision. Mark urgent items. If nothing needs his attention, say so.
 
-Format clearly with markdown headers."""
+1. **Channel-by-Channel Summary** — For each channel that had activity, give a concise summary of what was discussed. Highlight issues, blockers, completed work, updates, client communications, and decisions. Group by channel. Skip channels with no meaningful activity.
+
+2. **People Summary** — What did each person (Hannah, Lucy, Chen, Carlo, Brieanne, and anyone else) work on or communicate about? Be brief per person.
+
+3. **Brendan's To-Do List** — Based on all these messages, create a prioritized to-do list for Brendan (the founder/owner). Include:
+   - Items needing his approval or decision
+   - Follow-ups he should do
+   - Issues that need his attention
+   - Mark urgent items with \ud83d\udea8
+   If nothing needs his attention, say so.
+
+Be direct and concise. Use markdown formatting."""
 
     try:
         resp = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2000,
-            system="You are Iron Bot, HLT's production assistant. You summarize team messages and extract actionable items for Brendan, the founder. Be direct, concise, and prioritize what matters.",
+            max_tokens=3000,
+            system="You are Iron Bot, HLT's production assistant. You summarize team messages across all channels and extract actionable items for Brendan, the founder. Be direct, concise, and prioritize what matters. HLT is a custom promotional products / manufacturing company.",
             messages=[{"role": "user", "content": prompt}],
         )
         return resp.content[0].text.strip()
@@ -889,12 +932,16 @@ Format clearly with markdown headers."""
         return None
 
 
-def _build_message_summary_card(summary_text, period_label, hannah_count, lucy_count):
+def _build_message_summary_card(summary_text, period_label, channel_stats):
     """Build a Lark card for the message summary."""
     emoji = "\ud83c\udf19" if "overnight" in period_label.lower() else "\u2600\ufe0f"
     template = "indigo" if "overnight" in period_label.lower() else "orange"
 
-    stats_line = f"Hannah's channel: **{hannah_count}** messages | Lucy's channel: **{lucy_count}** messages"
+    total_msgs = sum(channel_stats.values())
+    active_channels = [f"{label}: **{count}**" for label, count in channel_stats.items() if count > 0]
+    stats_line = f"**{total_msgs} total messages** across **{len(active_channels)}** channels"
+    if active_channels:
+        stats_line += "\n" + " | ".join(active_channels)
 
     return {
         "config": {"wide_screen_mode": True},
@@ -907,20 +954,20 @@ def _build_message_summary_card(summary_text, period_label, hannah_count, lucy_c
 
 
 def send_message_summary(period="overnight"):
-    """Fetch messages from Hannah/Lucy channels, summarize, and send to digest channel.
-    period: 'overnight' (8pm-8am) or 'daytime' (8am-5pm)
+    """Fetch messages from ALL team channels, summarize, and send to digest channel.
+    period: 'overnight' (12am-8am) or 'daytime' (8am-5pm)
     """
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
     now = datetime.now(et)
 
     if period == "overnight":
-        # 8pm yesterday to 8am today
-        yesterday_8pm = now.replace(hour=20, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        # 12am (midnight) to 8am today
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        start_ts = int(yesterday_8pm.timestamp())
+        start_ts = int(today_midnight.timestamp())
         end_ts = int(today_8am.timestamp())
-        period_label = "Overnight Message Summary (8 PM \u2014 8 AM)"
+        period_label = "Overnight Message Summary (12 AM \u2014 8 AM)"
     else:
         # 8am today to 5pm today
         today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
@@ -931,14 +978,22 @@ def send_message_summary(period="overnight"):
 
     logger.info(f"Message summary [{period}]: fetching {start_ts} to {end_ts}")
 
-    hannah_msgs = _fetch_channel_messages(LARK_CHAT_ID_HANNAH, start_ts, end_ts) if LARK_CHAT_ID_HANNAH else []
-    lucy_msgs = _fetch_channel_messages(LARK_CHAT_ID_LUCY, start_ts, end_ts) if LARK_CHAT_ID_LUCY else []
+    channels = _get_summary_channels()
+    all_channel_msgs = {}
+    channel_stats = {}
 
-    logger.info(f"Message summary [{period}]: Hannah={len(hannah_msgs)}, Lucy={len(lucy_msgs)}")
+    for label, chat_id in channels.items():
+        msgs = _fetch_channel_messages(chat_id, start_ts, end_ts)
+        if msgs:
+            all_channel_msgs[label] = msgs
+        channel_stats[label] = len(msgs)
 
-    if not hannah_msgs and not lucy_msgs:
+    total = sum(channel_stats.values())
+    logger.info(f"Message summary [{period}]: {total} total messages across {len(channels)} channels")
+
+    if total == 0:
         logger.info(f"Message summary [{period}]: No messages found, skipping")
-        return {"status": "no_messages", "hannah": 0, "lucy": 0}
+        return {"status": "no_messages", "total": 0, "channels": channel_stats}
 
     # Get brief project context for smarter to-do generation
     projects_context = ""
@@ -968,17 +1023,17 @@ def send_message_summary(period="overnight"):
     except Exception:
         pass
 
-    summary = _summarize_messages_with_ai(hannah_msgs, lucy_msgs, period_label, projects_context)
+    summary = _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context)
     if not summary:
-        return {"status": "ai_error", "hannah": len(hannah_msgs), "lucy": len(lucy_msgs)}
+        return {"status": "ai_error", "total": total, "channels": channel_stats}
 
-    card = _build_message_summary_card(summary, period_label, len(hannah_msgs), len(lucy_msgs))
+    card = _build_message_summary_card(summary, period_label, channel_stats)
     target = DIGEST_CHAT or FOUNDERS_CHAT
     if target:
         lark.send_card(card, chat_id=target)
         logger.info(f"Message summary [{period}] sent to digest channel")
 
-    return {"status": "ok", "hannah": len(hannah_msgs), "lucy": len(lucy_msgs)}
+    return {"status": "ok", "total": total, "channels": channel_stats}
 
 
 # =========================================================================
