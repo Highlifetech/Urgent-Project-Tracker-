@@ -1300,9 +1300,11 @@ def _is_already_processed(message_id):
 
 
 # =========================================================================
-# FEATURE 7 - POLL & AUTO-REPLY Mark Resolved on Project Update Request cards
+# =========================================================================
+# FEATURE 7 - DETECT LARK BASE CARDS & SEND IRON BOT REPLACEMENT WITH MARK RESOLVED
 # =========================================================================
 _replied_card_ids = set()  # Track message_ids we've already replied to (in-memory)
+
 
 def _is_card_replied(message_id):
     """Check if we already replied to this card (DB-backed with in-memory cache)."""
@@ -1314,15 +1316,145 @@ def _is_card_replied(message_id):
         return True
     return False
 
+
 def _mark_card_replied(message_id):
     """Mark a card as replied to (DB + in-memory)."""
     _replied_card_ids.add(message_id)
     action_id = f"card_replied_{message_id}"
     _mark_action_clicked(action_id, "iron_bot")
 
+
+def _handle_incoming_card(msg, sender):
+    """Handle an interactive card message received via webhook.
+    If it is a Project Update Request card from Lark Base, send Iron Bot's
+    own replacement card with both Add Update and Mark Resolved buttons.
+    """
+    message_id = msg.get("message_id", "")
+    chat_id = msg.get("chat_id", "")
+
+    # Skip if already handled
+    if _is_card_replied(message_id):
+        return
+
+    # Log the full message for debugging
+    body_content = msg.get("body", {}).get("content", "{}")
+    logger.info(f"INCOMING CARD: msg_id={message_id} chat={chat_id} body_len={len(body_content)}")
+
+    # Try to parse the card JSON
+    try:
+        card = json.loads(body_content) if isinstance(body_content, str) else body_content
+    except Exception as e:
+        logger.error(f"INCOMING CARD: Failed to parse card JSON: {e}")
+        logger.info(f"INCOMING CARD raw body: {body_content[:500]}")
+        _mark_card_replied(message_id)
+        return
+
+    logger.info(f"INCOMING CARD parsed: type={type(card).__name__} keys={list(card.keys()) if isinstance(card, dict) else 'N/A'}")
+
+    # Check if this is a Project Update Request card
+    header = card.get("header", {}) if isinstance(card, dict) else {}
+    title = header.get("title", {})
+    title_content = title.get("content", "") if isinstance(title, dict) else str(title)
+    logger.info(f"INCOMING CARD title: '{title_content}' template: {header.get('template', '')}")
+
+    if "Project Update Request" not in title_content:
+        logger.info(f"INCOMING CARD: Not a Project Update Request (title='{title_content}'), skipping")
+        _mark_card_replied(message_id)
+        return
+
+    # Extract order number from the card content
+    order_num = ""
+    elements = card.get("elements", []) if isinstance(card, dict) else []
+    for elem in elements:
+        md = elem.get("content", "") if isinstance(elem, dict) else ""
+        if md and "status of order" in md.lower():
+            match = re.search(r"[#*]*([A-Z]{2,}[-]?[A-Z]*\d*[-]?SO?\d+|[A-Z]+\d+|#[A-Za-z0-9-]+)", md)
+            if match:
+                order_num = match.group(0).replace("**", "").replace("*", "")
+                if not order_num.startswith("#"):
+                    order_num = "#" + order_num
+                break
+
+    if not order_num:
+        # Try a simpler regex
+        for elem in elements:
+            md = elem.get("content", "") if isinstance(elem, dict) else ""
+            match = re.search(r"#([A-Za-z0-9-]+)", md)
+            if match:
+                order_num = "#" + match.group(1)
+                break
+
+    logger.info(f"INCOMING CARD: Project Update Request detected! order={order_num} chat={chat_id}")
+
+    # Determine assigned_to based on which channel this was posted in
+    assigned_to = "Team"
+    if chat_id == LARK_CHAT_ID_HANNAH:
+        assigned_to = "Hannah"
+    elif chat_id == LARK_CHAT_ID_LUCY:
+        assigned_to = "Lucy"
+
+    # Build and send Iron Bot's own card with Mark Resolved button
+    action_id = f"mark_resolved_ironbot_{chat_id}_{order_num}_{message_id[-8:]}"
+    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+
+    add_update_actions = []
+    # Try to extract the link from the original card
+    record_link_url = ""
+    for elem in elements:
+        md = elem.get("content", "") if isinstance(elem, dict) else ""
+        if "2026" in md and "PRODUCTION" in md.upper():
+            link_match = re.search(r"\(([^)]+)\)", md)
+            if link_match:
+                record_link_url = link_match.group(1)
+            break
+        # Also check action buttons for URLs
+        if elem.get("tag") == "action":
+            for btn in elem.get("actions", []):
+                if btn.get("url"):
+                    record_link_url = btn["url"]
+                    break
+
+    add_update_btn = {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "Add Update"},
+        "type": "default",
+    }
+    if record_link_url:
+        add_update_btn["url"] = record_link_url
+
+    if _is_action_clicked(action_id):
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+    else:
+        resolve_btn = {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
+            "type": "primary",
+            "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
+        }
+
+    ironbot_card = {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
+        "elements": [
+            {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+            {"tag": "action", "actions": [add_update_btn, resolve_btn]},
+        ],
+    }
+    if record_link_url:
+        ironbot_card["elements"].append({"tag": "markdown", "content": f"From [2026 PRODUCTION]({record_link_url})"})
+
+    try:
+        lark.send_card(ironbot_card, chat_id=chat_id)
+        logger.info(f"IRON BOT card sent for {order_num} to {assigned_to} channel (replacing Lark Base card)")
+    except Exception as e:
+        logger.error(f"Failed to send Iron Bot replacement card for {order_num}: {e}")
+
+    _mark_card_replied(message_id)
+
+
 def _poll_update_request_cards():
-    """Check Hannah & Lucy channels for recent Project Update Request cards
-    from Lark Base, and reply with Mark Resolved button."""
+    """Backup poll: Check Hannah & Lucy channels for recent Project Update Request cards
+    from Lark Base that we may have missed via webhook, and send Iron Bot's own card."""
     channels = []
     if LARK_CHAT_ID_HANNAH:
         channels.append(("Hannah", LARK_CHAT_ID_HANNAH))
@@ -1330,84 +1462,124 @@ def _poll_update_request_cards():
         channels.append(("Lucy", LARK_CHAT_ID_LUCY))
     if not channels:
         return
-    # Look at messages from the last 10 minutes
+
     now_ts = int(time.time())
     start_ts = str(now_ts - 600)
     end_ts = str(now_ts)
-    total_replied = 0
+    total_handled = 0
+
     for assigned_to, chat_id in channels:
         try:
             messages = lark.get_chat_history(chat_id, start_time=start_ts, end_time=end_ts, limit=50)
+            logger.info(f"POLL: {assigned_to} channel returned {len(messages)} messages")
         except Exception as e:
-            logger.error(f"Poll cards error ({assigned_to}): {e}")
+            logger.error(f"POLL: error fetching {assigned_to}: {e}")
             continue
+
         for msg in messages:
             msg_type = msg.get("msg_type", "")
-            if msg_type != "interactive":
-                continue
             message_id = msg.get("message_id", "")
             if not message_id:
                 continue
-            # Skip if already replied
+
+            # Log every message type for debugging
+            sender_info = msg.get("sender", {})
+            logger.info(f"POLL: msg_type={msg_type} sender={sender_info.get('sender_type','')} id={sender_info.get('id','')} msg_id={message_id[:15]}")
+
+            if msg_type != "interactive":
+                continue
+
             if _is_card_replied(message_id):
                 continue
-            # Skip messages from Iron Bot itself
-            sender = msg.get("sender", {})
-            sender_id = sender.get("id", "")
+
+            # Skip our own bot messages
+            sender_id = sender_info.get("id", "")
             if BOT_OPEN_ID and sender_id == BOT_OPEN_ID:
                 _mark_card_replied(message_id)
                 continue
-            # Parse card content
+
             body_content = msg.get("body", {}).get("content", "{}")
             try:
                 card = json.loads(body_content) if isinstance(body_content, str) else body_content
             except Exception:
                 _mark_card_replied(message_id)
                 continue
-            # Check if this is a Project Update Request card
-            header = card.get("header", {})
+
+            header = card.get("header", {}) if isinstance(card, dict) else {}
             title = header.get("title", {})
-            title_content = title.get("content", "") if isinstance(title, dict) else ""
+            title_content = title.get("content", "") if isinstance(title, dict) else str(title)
+
             if "Project Update Request" not in title_content:
                 _mark_card_replied(message_id)
                 continue
+
             # Extract order number
             order_num = ""
-            for elem in card.get("elements", []):
-                md = elem.get("content", "")
-                if md and "status of order" in md:
-                    match = re.search(r"#([A-Za-z0-9\\-]+)", md)
-                    if match:
-                        order_num = "#" + match.group(1)
-                        break
+            elements = card.get("elements", []) if isinstance(card, dict) else []
+            for elem in elements:
+                md = elem.get("content", "") if isinstance(elem, dict) else ""
+                match = re.search(r"#([A-Za-z0-9-]+)", md)
+                if match:
+                    order_num = "#" + match.group(1)
+                    break
+
             if not order_num:
                 _mark_card_replied(message_id)
                 continue
-            logger.info(f"Found Project Update Request for {order_num} in {assigned_to} channel, sending Mark Resolved reply")
-            # Build & send reply card with Mark Resolved button
-            action_id = f"mark_resolved_auto_{chat_id}_{order_num}_{message_id[-8:]}"
-            resolve_btn_card = {
+
+            logger.info(f"POLL: Found Project Update Request for {order_num} in {assigned_to}, sending Iron Bot card")
+
+            # Send Iron Bot replacement card (same logic as _handle_incoming_card)
+            action_id = f"mark_resolved_ironbot_{chat_id}_{order_num}_{message_id[-8:]}"
+            names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+
+            record_link_url = ""
+            for elem in elements:
+                if elem.get("tag") == "action":
+                    for btn in elem.get("actions", []):
+                        if btn.get("url"):
+                            record_link_url = btn["url"]
+                            break
+                md = elem.get("content", "") if isinstance(elem, dict) else ""
+                link_match = re.search(r"\(([^)]+larksuite[^)]+)\)", md)
+                if link_match:
+                    record_link_url = link_match.group(1)
+
+            add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default"}
+            if record_link_url:
+                add_update_btn["url"] = record_link_url
+
+            resolve_btn = {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
+                "type": "primary",
+                "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
+            }
+
+            ironbot_card = {
                 "config": {"wide_screen_mode": True},
-                "header": {"title": {"tag": "plain_text", "content": f"\u2705 {order_num} \u2014 Mark Resolved"}, "template": "green"},
+                "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
                 "elements": [
-                    {"tag": "markdown", "content": f"When you have provided your update for **{order_num}**, click below to notify Brendan."},
-                    {"tag": "action", "actions": [
-                        {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary",
-                         "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}},
-                    ]},
+                    {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+                    {"tag": "action", "actions": [add_update_btn, resolve_btn]},
                 ],
             }
-            try:
-                lark.reply_card(message_id, resolve_btn_card)
-                total_replied += 1
-                logger.info(f"Mark Resolved reply sent for {order_num} (msg {message_id})")
-            except Exception as e:
-                logger.error(f"Reply card error for {order_num}: {e}")
-            _mark_card_replied(message_id)
-    if total_replied:
-        logger.info(f"Poll cards: replied to {total_replied} Project Update Request card(s)")
+            if record_link_url:
+                ironbot_card["elements"].append({"tag": "markdown", "content": f"From [2026 PRODUCTION]({record_link_url})"})
 
-# =========================================================================
+            try:
+                lark.send_card(ironbot_card, chat_id=chat_id)
+                total_handled += 1
+                logger.info(f"POLL: Iron Bot card sent for {order_num}")
+            except Exception as e:
+                logger.error(f"POLL: Failed to send card for {order_num}: {e}")
+
+            _mark_card_replied(message_id)
+
+    if total_handled:
+        logger.info(f"POLL: Handled {total_handled} Project Update Request card(s)")
+
+
 # FLASK ROUTES
 # =========================================================================
 @app.route("/webhook", methods=["POST"])
@@ -1421,17 +1593,21 @@ def webhook():
     msg = event.get("message", {})
     msg_type = msg.get("message_type", "")
     sender = event.get("sender", {})
+    # Debug logging for every webhook event
+    sender_type = sender.get("sender_type", "")
+    sender_id_val = sender.get("sender_id", {}).get("open_id", "")
+    chat_id_val = msg.get("chat_id", "")
+    message_id = msg.get("message_id", "")
+    logger.info(f"WEBHOOK: type={event_type} msg={msg_type} sender_type={sender_type} sender_id={sender_id_val} chat={chat_id_val} msg_id={message_id}")
     if event_type != "im.message.receive_v1":
         return jsonify({"code": 0})
-    message_id = msg.get("message_id", "")
     if _is_already_processed(message_id):
         return jsonify({"code": 0})
-    # Handle interactive (card) messages — detect Project Update Request from Lark Base
+    # Handle interactive (card) messages from other apps (e.g. Lark Base)
     if msg_type == "interactive":
-        sender_type = sender.get("sender_type", "")
-        sender_id = sender.get("sender_id", {}).get("open_id", "")
-        if sender_type == "app" and sender_id != BOT_OPEN_ID:
-            threading.Thread(target=_handle_incoming_card, args=(msg,), daemon=True).start()
+        logger.info(f"WEBHOOK: Interactive card from sender_type={sender_type} sender_id={sender_id_val} (our bot={BOT_OPEN_ID})")
+        if sender_id_val != BOT_OPEN_ID:
+            threading.Thread(target=_handle_incoming_card, args=(msg, sender,), daemon=True).start()
         return jsonify({"code": 0})
     if msg_type != "text":
         return jsonify({"code": 0})
@@ -1625,12 +1801,12 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.8"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.9"})
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.8", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.9", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries"]})
 
 
 # =========================================================================
