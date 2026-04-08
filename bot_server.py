@@ -965,7 +965,7 @@ def _fetch_channel_messages(chat_id, start_ts, end_ts):
                     time_str = dt.strftime("%I:%M %p")
                 except Exception:
                     time_str = ""
-                clean_text = text[:500].encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+                clean_text = re.sub(r"[\ud800-\udfff]", "", text[:500])
                 messages.append({"sender": sender_name, "text": clean_text, "time_str": time_str})
     except Exception as e:
         logger.error(f"Fetch channel messages error ({chat_id}): {e}")
@@ -991,7 +991,7 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
     transcript = "\n".join(transcript_parts)
     # Remove surrogate characters that break UTF-8 encoding for the API
-    transcript = transcript.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    transcript = re.sub(r"[\ud800-\udfff]", "", transcript)
     # Truncate if too long for the API
     if len(transcript) > 30000:
         transcript = transcript[:30000] + "\n... [truncated]"
@@ -1018,6 +1018,7 @@ Please provide:
 Be direct and concise. Use markdown formatting."""
 
     try:
+        prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
         resp = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=3000,
