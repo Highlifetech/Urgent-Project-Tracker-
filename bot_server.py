@@ -902,7 +902,7 @@ def _get_summary_channels():
     _add("Brieanne", LARK_CHAT_ID_BRIEANNE)
     _add("Hannah Artwork", LARK_CHAT_ID_HANNAH_ARTWORK)
     _add("Lucy Artwork", LARK_CHAT_ID_LUCY_ARTWORK)
-    _add("Design", LARK_CHAT_ID_HLT_DESIGN)
+    _add("Brieanne Design", LARK_CHAT_ID_HLT_DESIGN)
     _add("Hannah Order Issues", LARK_CHAT_ID_ORDER_ISSUES_HANNAH)
     _add("Lucy Order Issues", LARK_CHAT_ID_ORDER_ISSUES_LUCY)
     _add("Hannah Quotes", LARK_CHAT_ID_QUOTES_HANNAH)
@@ -911,7 +911,7 @@ def _get_summary_channels():
     _add("Hannah Samples", LARK_CHAT_ID_SAMPLES_HANNAH)
     _add("Hannah Shipments", LARK_CHAT_ID_SHIPMENTS_HANNAH)
     _add("Lucy Shipments", LARK_CHAT_ID_SHIPMENTS_LUCY)
-    _add("Inbound", LARK_CHAT_ID_HLT_INBOUND)
+    _add("Carlo Inbound", LARK_CHAT_ID_HLT_INBOUND)
     _add("Founders", FOUNDERS_CHAT)
     _add("Updates", UPDATES_CHAT)
     _add("Urgent Approvals", URGENT_APPROVALS_CHAT)
@@ -1027,7 +1027,9 @@ RULES:
 - Be thorough \u2014 include quantities, dates, costs, who said what
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
-- Each person section separated by a divider line"""
+- Each person section separated by a divider line
+- For CARLO: keep it brief — summarize his tasks and inbound shipment statuses in a few short lines, not detailed bullet lists
+- Design channel = BRIEANNE (group Design messages under BRIEANNE section)"""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
