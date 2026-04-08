@@ -1002,20 +1002,40 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Please provide:
+Organize the summary in this EXACT structure. Use clean, scannable markdown:
 
-1. **Channel-by-Channel Summary** — For each channel that had activity, give a concise summary of what was discussed. Highlight issues, blockers, completed work, updates, client communications, and decisions. Group by channel. Skip channels with no meaningful activity.
+---
 
-2. **People Summary** — What did each person (Hannah, Lucy, Chen, Carlo, Brieanne, and anyone else) work on or communicate about? Be brief per person.
+**HANNAH**
+For each distinct topic/project Hannah was involved in, write one line:
+**Topic Name** — Brief summary of what was discussed or decided. (Who said what if multiple people involved)
 
-3. **Brendan's To-Do List** — Based on all these messages, create a prioritized to-do list for Brendan (the founder/owner). Include:
-   - Items needing his approval or decision
-   - Follow-ups he should do
-   - Issues that need his attention
-   - Mark urgent items with \ud83d\udea8
-   If nothing needs his attention, say so.
+**LUCY**
+Same format as Hannah.
 
-Be direct and concise. Use markdown formatting."""
+**CARLO**
+Same format as Hannah.
+
+**BRIEANNE**
+Same format as Hannah.
+
+**OTHERS**
+Any messages from Chen or other team members, same format.
+
+---
+
+**BRENDAN'S ACTION ITEMS**
+A clean numbered list of things Brendan needs to act on, based on all messages above. Mark urgent items with \ud83d\udea8. Include who is waiting on him and for what. If nothing needs his attention, say so.
+
+---
+
+RULES:
+- Group by PERSON first (Hannah, Lucy, Carlo, Brieanne, Others), not by channel
+- Under each person, list topics as: **Topic** — summary (who said what)
+- Skip any person with no messages
+- Be concise — one line per topic, no bullet sub-lists
+- Always attribute who said what when summarizing conversations
+- Use markdown bold for topic names only"""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
