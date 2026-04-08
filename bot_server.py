@@ -965,7 +965,8 @@ def _fetch_channel_messages(chat_id, start_ts, end_ts):
                     time_str = dt.strftime("%I:%M %p")
                 except Exception:
                     time_str = ""
-                messages.append({"sender": sender_name, "text": text[:500], "time_str": time_str})
+                clean_text = text[:500].encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+                messages.append({"sender": sender_name, "text": clean_text, "time_str": time_str})
     except Exception as e:
         logger.error(f"Fetch channel messages error ({chat_id}): {e}")
     return messages
@@ -989,6 +990,8 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
         transcript_parts.append("")
 
     transcript = "\n".join(transcript_parts)
+    # Remove surrogate characters that break UTF-8 encoding for the API
+    transcript = transcript.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
     # Truncate if too long for the API
     if len(transcript) > 30000:
         transcript = transcript[:30000] + "\n... [truncated]"
