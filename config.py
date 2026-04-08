@@ -26,7 +26,7 @@ LARK_BASE_RECORD_URL = os.environ.get(
 # LARK GROUP CHATS
 # =============================================================================
 # Founders Channel (Brendan) - receives Notify cards, digests, confirmations
-LARK_CHAT_ID_FOUNDERS = os.environ.get("LARK_CHAT_ID_DIGEST", "")
+LARK_CHAT_ID_FOUNDERS = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
 
 # Production channels for Hannah and Lucy
 LARK_CHAT_ID_HANNAH = os.environ.get("LARK_CHAT_ID_HANNAH", "")
