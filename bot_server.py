@@ -1890,8 +1890,8 @@ def message_summary_endpoint():
         if provided != DIGEST_SECRET:
             return jsonify({"error": "Unauthorized"}), 401
     period = request.args.get("period", "overnight")
-    if period not in ("overnight", "daytime"):
-        return jsonify({"error": "period must be 'overnight' or 'daytime'"}), 400
+    if period not in ("overnight", "midday", "evening"):
+        return jsonify({"error": "period must be 'overnight', 'midday', or 'evening'"}), 400
     digest_only = request.args.get("digest_only", "").lower() in ("true", "1", "yes")
     result = send_message_summary(period=period, digest_only=digest_only)
     return jsonify(result)
