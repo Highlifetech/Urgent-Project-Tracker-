@@ -45,6 +45,7 @@ FOUNDERS_CHAT = os.environ.get("LARK_CHAT_ID_FOUNDERS", "")
 UPDATES_CHAT = os.environ.get("LARK_CHAT_ID_UPDATES", "")
 DIGEST_CHAT = os.environ.get("LARK_CHAT_ID_DIGEST", "")
 URGENT_APPROVALS_CHAT = os.environ.get("LARK_CHAT_ID_URGENT_APPROVALS", "")
+MASTER_CHAT = os.environ.get("LARK_CHAT_ID_MASTER", "")
 
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
@@ -1075,6 +1076,67 @@ def _build_message_summary_card(summary_text, period_label, channel_stats):
     }
 
 
+
+def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
+    """Send person-specific message summaries to their production channels.
+    Hannah channels -> Master Production, Lucy channels -> Lucy Production.
+    """
+    HANNAH_PREFIXES = ("Hannah ",)
+    LUCY_PREFIXES = ("Lucy ",)
+
+    for person, prefixes, target_chat, person_label in [
+        ("Hannah", HANNAH_PREFIXES, MASTER_CHAT, "Hannah"),
+        ("Lucy", LUCY_PREFIXES, LARK_CHAT_ID_LUCY, "Lucy"),
+    ]:
+        if not target_chat:
+            continue
+        person_msgs = {k: v for k, v in all_channel_msgs.items() if any(k.startswith(p) for p in prefixes)}
+        if not person_msgs:
+            logger.info(f"Person summary [{person}]: No messages, skipping")
+            continue
+        total = sum(len(v) for v in person_msgs.values())
+        logger.info(f"Person summary [{person}]: {total} msgs across {len(person_msgs)} channels")
+        try:
+            # Build transcript for this person only
+            transcript_parts = []
+            for ch_label, msgs in person_msgs.items():
+                transcript_parts.append(f"\n--- {ch_label} ---")
+                for m in msgs:
+                    transcript_parts.append(f"[{m.get('time_str','')}] {m.get('sender','?')}: {m.get('text','')}")
+            transcript = "\n".join(transcript_parts)
+            transcript = re.sub(r"[\ud800-\udfff]", "", transcript)
+            if len(transcript) > 20000:
+                transcript = transcript[:20000] + "\n... (truncated)"
+            prompt = f"""Summarize the following messages from {person_label}'s channels for the period: {period_label}.
+Organize by TOPIC — message format. Say who said what.
+Keep it concise and actionable. Highlight anything that needs follow-up or is urgent.
+
+{transcript}"""
+            prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            resp = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            summary_text = resp.content[0].text if resp.content else ""
+            if not summary_text:
+                continue
+            # Build and send card
+            emoji = "\U0001f319" if "Overnight" in period_label else "\U0001f31e"
+            card = {
+                "config": {"wide_screen_mode": True},
+                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update — {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
+                "elements": [
+                    {"tag": "markdown", "content": summary_text},
+                ],
+            }
+            lark.send_card(card, chat_id=target_chat)
+            logger.info(f"Person summary [{person}] sent to {target_chat[:20]}...")
+        except Exception as e:
+            logger.error(f"Person summary [{person}] error: {e}")
+
+
 def send_message_summary(period="overnight"):
     """Fetch messages from ALL team channels, summarize, and send to digest channel.
     period: 'overnight' (12am-8am) or 'daytime' (8am-5pm)
@@ -1154,6 +1216,13 @@ def send_message_summary(period="overnight"):
     if target:
         lark.send_card(card, chat_id=target)
         logger.info(f"Message summary [{period}] sent to digest channel")
+
+
+    # Send person-specific summaries to production channels
+    try:
+        _send_person_summaries(all_channel_msgs, period_label, projects_context)
+    except Exception as e:
+        logger.error(f"Person summaries error: {e}")
 
     return {"status": "ok", "total": total, "channels": channel_stats}
 
