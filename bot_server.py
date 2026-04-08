@@ -1028,8 +1028,9 @@ RULES:
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
-- For CARLO: keep it brief — summarize his tasks and inbound shipment statuses in a few short lines, not detailed bullet lists
-- Design channel = BRIEANNE (group Design messages under BRIEANNE section)"""
+- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points — just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** — Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
+- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section — Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
+- The ONLY allowed person headers are: HANNAH, LUCY, CARLO, BRIEANNE, OTHERS. Never create other headers like DESIGN, INBOUND, etc."""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
