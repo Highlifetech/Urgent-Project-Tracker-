@@ -1006,12 +1006,12 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder). Be detailed — capture key points, who said what, statuses, and deadlines.
+Summarize these messages for Brendan (the founder). Be concise but informative — focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
 
 Organize by PERSON in this order: **HANNAH/CHEN**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages).
 
 Under each person, list each topic like this:
-**Topic Name** \u2014 Detailed summary of what was discussed. Who said what, current status, any deadlines or quantities. (2-3 sentences max per topic)
+**Topic Name** \u2014 Detailed summary of what was discussed. Who said what, current status, any deadlines or quantities. (1-2 sentences max per topic)
 
 Put a blank line between each topic for readability.
 
@@ -1024,7 +1024,7 @@ RULES:
 - Group by PERSON first, not by channel
 - Use **bold** for topic names and person headers \u2014 NEVER use ## headers or underline
 - Each topic = **Bold Name** \u2014 description (paragraph style, not bullets)
-- Be thorough \u2014 include quantities, dates, costs, who said what
+- Be concise \u2014 focus on status, decisions, and action needed. Include key numbers/dates only
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
