@@ -1006,28 +1006,45 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder) in a clean, well-spaced layout.
+Summarize these messages for Brendan (the founder). Be VERY detailed — capture every key point, who said what, statuses, and deadlines.
 
-FORMAT RULES — follow these exactly:
+FORMAT STRUCTURE — follow this exactly:
 
-1. Organize by person: **HANNAH**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages)
+Group by PERSON first (Hannah, Lucy, Carlo, Brieanne, Others). Skip any person with no messages.
+Under each person, group by TOPIC. Use this structure:
 
-2. Under each person, list topics one per line with a blank line between each:
+**HANNAH**
 
-   **Topic Name** — Brief summary of what happened. (Brendan said X, Hannah replied Y)
+**TOPIC NAME** \ud83d\udea8 (add emoji only if urgent)
+• **Name**: What they said or did
+• **Name**: Their response
+• **Status**: Current state of this topic
+• **URGENT**: Any deadline or critical info (if applicable)
 
-3. After all people, add a divider (---) then:
+(blank line between topics)
 
-   **BRENDAN'S ACTION ITEMS**
-   Number each item. Mark urgent with \ud83d\udea8. Say who needs what from him.
+**NEXT TOPIC NAME**
+• **Name**: Detail
+• **Name**: Detail
 
-STYLE RULES:
-- Use **bold** for all emphasis — NEVER use underline, italics, or ## headers
-- Put a blank line between every topic for breathing room
-- One line per topic — no nested bullets or sub-lists
-- Keep it scannable — short sentences, not paragraphs
-- Always say who said what when summarizing a back-and-forth
-- Start each person section with their name in bold on its own line, then a blank line before topics"""
+---
+
+After all people sections, end with:
+
+**CRITICAL FOLLOW-UPS** \u26a0\ufe0f
+1. **Item name** - What needs to happen
+2. **Item name** - What needs to happen
+
+**Communication Issue**: Any frustrations or gaps noted (if any)
+
+RULES:
+- Use **bold** for names, topics, labels — NEVER use underline
+- Use ## for section headers (## TOPIC NAME) to create visual separation
+- Use bullet points (•) for detail lines under each topic
+- Include every key detail — quantities, dates, costs, who said what
+- Be thorough — Brendan relies on this to know everything that happened
+- Mark urgent items with \ud83d\udea8 emoji
+- Add a blank line between each topic section for readability"""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
@@ -1097,24 +1114,35 @@ def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
                 transcript = transcript[:20000] + "\n... (truncated)"
             prompt = f"""Summarize the following messages from {person_label}'s channels for Brendan. Period: {period_label}.
 
-FORMAT RULES — follow these exactly:
+Be VERY detailed — capture every key point, who said what, statuses, deadlines, and quantities.
 
-1. Group messages by topic/project. For each topic, write one entry:
+FORMAT — follow this exactly:
 
-   **Topic Name** — What happened. (Who said what)
+## TOPIC NAME \ud83d\udea8 (add emoji only if urgent)
+• **Brendan**: What Brendan said or asked
+• **{person_label}**: What they responded
+• **Status**: Current state
+• **URGENT**: Any deadline (if applicable)
 
-2. Put a blank line between each topic for spacing.
+(blank line between each topic)
 
-3. At the end, add a divider (---) then:
+## NEXT TOPIC
+• **Name**: Detail
+• **Name**: Detail
 
-   **FOLLOW-UPS NEEDED**
-   List anything Brendan needs to act on or respond to. Mark urgent with \ud83d\udea8.
+---
 
-STYLE RULES:
-- Use **bold** for emphasis — NEVER use underline, italics, or ## headers
-- No nested bullets or sub-lists — one clean line per topic
-- Always attribute who said what
-- Keep it concise and scannable
+**CRITICAL FOLLOW-UPS** \u26a0\ufe0f
+1. **Item** - What needs to happen
+2. **Item** - What needs to happen
+
+RULES:
+- Use **bold** for names and labels — NEVER use underline
+- Use ## for topic headers to create visual separation
+- Use bullet points (•) for details under each topic
+- Include quantities, dates, costs, who said what — be thorough
+- Mark urgent items with \ud83d\udea8
+- Add blank lines between topic sections for readability
 
 {transcript}"""
             prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
