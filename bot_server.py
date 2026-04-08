@@ -317,6 +317,25 @@ def get_assigned_from_table(table_name):
     return "Brendan"
 
 
+# Large client tables that route to Master Production (Hannah's team handles these)
+LARGE_CLIENT_TABLES = [
+    "invisible north", "tpd design house", "7brew coffee", "cal jewellery",
+    "mfused", "craftworks", "denim tears", "liquid death", "vees clothing",
+    "unjust jewelry", "wildfang",
+]
+
+
+def _route_card_target(table_name, assigned_to):
+    """Determine which chat to send update/request cards to.
+    Hannah tables + Large Client tables -> Master Production
+    Everything else -> Lucy Production
+    """
+    tname = (table_name or "").lower()
+    if "hannah" in tname or any(lc in tname for lc in LARGE_CLIENT_TABLES):
+        return MASTER_CHAT or FOUNDERS_CHAT
+    return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
+
+
 def get_image_key_from_field(fields, field_name="Production Artwork"):
     val = fields.get(field_name)
     if isinstance(val, list) and val:
@@ -592,12 +611,7 @@ def handle_update_team_button(table_id, record_id):
             except Exception:
                 pass
         card = build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name)
-        if assigned_to == "Hannah":
-            target = LARK_CHAT_ID_HANNAH
-        elif assigned_to == "Lucy":
-            target = LARK_CHAT_ID_LUCY
-        else:
-            target = FOUNDERS_CHAT
+        target = _route_card_target(table_name, assigned_to)
         if target:
             lark.send_card(card, chat_id=target)
             logger.info(f"Update Team card for {order_num} sent to {assigned_to} channel")
@@ -667,12 +681,7 @@ def handle_request_update_button(table_id, record_id):
 
         card = build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name)
 
-        if assigned_to == "Hannah":
-            target = LARK_CHAT_ID_HANNAH
-        elif assigned_to == "Lucy":
-            target = LARK_CHAT_ID_LUCY
-        else:
-            target = FOUNDERS_CHAT
+        target = _route_card_target(table_name, assigned_to)
 
         if target:
             lark.send_card(card, chat_id=target)
