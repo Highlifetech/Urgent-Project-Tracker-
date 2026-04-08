@@ -466,6 +466,73 @@ def handle_notify_button(table_id, record_id):
 
 
 # =========================================================================
+# FEATURE 1B - PROJECT APPROVAL NEEDED -> Founders (Brendan Review button)
+# =========================================================================
+
+def build_approval_card(order_num, assigned_to, table_id, record_id, table_name=""):
+    """Card asking Brendan to review a project, with View Record + Mark Resolved."""
+    link = record_link(table_id, record_id)
+    action_id = f"approval_resolved_{table_id}_{record_id}"
+
+    submitter = assigned_to or "Team"
+
+    elements = [
+        {"tag": "markdown", "content": f"Brendan,\n\n{submitter} has submitted a request for **{order_num}** to review regarding production. Please reply in the card comments."},
+    ]
+
+    view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
+
+    if _is_action_clicked(action_id):
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
+    else:
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
+
+    elements.append({"tag": "action", "actions": [view_btn, resolve_btn]})
+
+    from_label = table_name or "PRODUCTION"
+    elements.append({"tag": "markdown", "content": f"From [2026 {from_label.upper()}]({link})"})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Project Approval Needed"}, "template": "purple"},
+        "elements": elements,
+    }
+
+
+def handle_review_button(table_id, record_id):
+    """Send a Project Approval Needed card to Founders channel."""
+    try:
+        record = lark.get_record(table_id, record_id)
+        fields = record.get("fields", {})
+        order_num = get_order_num(fields)
+        assigned_to = get_assigned_to(fields)
+
+        table_name = ""
+        try:
+            tables = lark.get_all_tables()
+            for t in tables:
+                if t.get("table_id") == table_id:
+                    table_name = t.get("name", "")
+                    if assigned_to == "Brendan":
+                        assigned_to = get_assigned_from_table(table_name)
+                    break
+        except Exception:
+            pass
+
+        card = build_approval_card(order_num, assigned_to, table_id, record_id, table_name)
+
+        target = FOUNDERS_CHAT
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info(f"Approval card sent to Founders for {order_num} (submitted by {assigned_to})")
+
+        return {"status": "ok", "order": order_num}
+    except Exception as e:
+        logger.error(f"Review button error: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+# =========================================================================
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name=""):
@@ -1185,6 +1252,21 @@ def handle_card_callback(body):
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
+    if action_str.startswith("approval_resolved_"):
+        if _is_action_clicked(action_str):
+            return {"toast": {"type": "info", "content": "Already resolved"}}
+        _mark_action_clicked(action_str, operator_name)
+        order_num = action_value.get("order_num", "")
+        tid = action_value.get("table_id", "")
+        rid = action_value.get("record_id", "")
+        if FOUNDERS_CHAT:
+            now_str = _est_now().strftime("%I:%M %p ET, %b %d")
+            link = record_link(tid, rid) if tid and rid else ""
+            order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
+            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Approval Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the approval request for {order_display} \u2014 {now_str}"}]}
+            lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
+        return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
+
     if action_str.startswith("request_update_"):
         if _is_action_clicked(action_str):
             return {"toast": {"type": "info", "content": "Already acknowledged"}}
@@ -1651,6 +1733,10 @@ def update_team_endpoint(table_id, record_id):
 @app.route("/request-update/<table_id>/<record_id>", methods=["POST", "GET"])
 def request_update_endpoint(table_id, record_id):
     return jsonify(handle_request_update_button(table_id, record_id))
+
+@app.route("/review/<table_id>/<record_id>", methods=["POST", "GET"])
+def review_endpoint(table_id, record_id):
+    return jsonify(handle_review_button(table_id, record_id))
 
 
 @app.route("/morning-digest", methods=["POST", "GET"])
