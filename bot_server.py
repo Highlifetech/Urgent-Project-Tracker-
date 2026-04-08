@@ -1006,40 +1006,28 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Organize the summary in this EXACT structure. Use clean, scannable markdown:
+Summarize these messages for Brendan (the founder) in a clean, well-spaced layout.
 
----
+FORMAT RULES — follow these exactly:
 
-**HANNAH**
-For each distinct topic/project Hannah was involved in, write one line:
-**Topic Name** — Brief summary of what was discussed or decided. (Who said what if multiple people involved)
+1. Organize by person: **HANNAH**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages)
 
-**LUCY**
-Same format as Hannah.
+2. Under each person, list topics one per line with a blank line between each:
 
-**CARLO**
-Same format as Hannah.
+   **Topic Name** — Brief summary of what happened. (Brendan said X, Hannah replied Y)
 
-**BRIEANNE**
-Same format as Hannah.
+3. After all people, add a divider (---) then:
 
-**OTHERS**
-Any messages from Chen or other team members, same format.
+   **BRENDAN'S ACTION ITEMS**
+   Number each item. Mark urgent with \ud83d\udea8. Say who needs what from him.
 
----
-
-**BRENDAN'S ACTION ITEMS**
-A clean numbered list of things Brendan needs to act on, based on all messages above. Mark urgent items with \ud83d\udea8. Include who is waiting on him and for what. If nothing needs his attention, say so.
-
----
-
-RULES:
-- Group by PERSON first (Hannah, Lucy, Carlo, Brieanne, Others), not by channel
-- Under each person, list topics as: **Topic** — summary (who said what)
-- Skip any person with no messages
-- Be concise — one line per topic, no bullet sub-lists
-- Always attribute who said what when summarizing conversations
-- Use markdown bold for topic names only"""
+STYLE RULES:
+- Use **bold** for all emphasis — NEVER use underline, italics, or ## headers
+- Put a blank line between every topic for breathing room
+- One line per topic — no nested bullets or sub-lists
+- Keep it scannable — short sentences, not paragraphs
+- Always say who said what when summarizing a back-and-forth
+- Start each person section with their name in bold on its own line, then a blank line before topics"""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
@@ -1107,9 +1095,26 @@ def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
             transcript = re.sub(r"[\ud800-\udfff]", "", transcript)
             if len(transcript) > 20000:
                 transcript = transcript[:20000] + "\n... (truncated)"
-            prompt = f"""Summarize the following messages from {person_label}'s channels for the period: {period_label}.
-Organize by TOPIC — message format. Say who said what.
-Keep it concise and actionable. Highlight anything that needs follow-up or is urgent.
+            prompt = f"""Summarize the following messages from {person_label}'s channels for Brendan. Period: {period_label}.
+
+FORMAT RULES — follow these exactly:
+
+1. Group messages by topic/project. For each topic, write one entry:
+
+   **Topic Name** — What happened. (Who said what)
+
+2. Put a blank line between each topic for spacing.
+
+3. At the end, add a divider (---) then:
+
+   **FOLLOW-UPS NEEDED**
+   List anything Brendan needs to act on or respond to. Mark urgent with \ud83d\udea8.
+
+STYLE RULES:
+- Use **bold** for emphasis — NEVER use underline, italics, or ## headers
+- No nested bullets or sub-lists — one clean line per topic
+- Always attribute who said what
+- Keep it concise and scannable
 
 {transcript}"""
             prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
