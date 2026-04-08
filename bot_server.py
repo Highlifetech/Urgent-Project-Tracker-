@@ -1139,7 +1139,7 @@ RULES:
             logger.error(f"Person summary [{person}] error: {e}")
 
 
-def send_message_summary(period="overnight"):
+def send_message_summary(period="overnight", digest_only=False):
     """Fetch messages from ALL team channels, summarize, and send to digest channel.
     period: 'overnight' (12am-8am) or 'daytime' (8am-5pm)
     """
@@ -1221,10 +1221,13 @@ def send_message_summary(period="overnight"):
 
 
     # Send person-specific summaries to production channels
-    try:
-        _send_person_summaries(all_channel_msgs, period_label, projects_context)
-    except Exception as e:
-        logger.error(f"Person summaries error: {e}")
+    if not digest_only:
+        try:
+            _send_person_summaries(all_channel_msgs, period_label, projects_context)
+        except Exception as e:
+            logger.error(f"Person summaries error: {e}")
+    else:
+        logger.info("Skipping person summaries (digest_only=True)")
 
     return {"status": "ok", "total": total, "channels": channel_stats}
 
@@ -1886,7 +1889,8 @@ def message_summary_endpoint():
     period = request.args.get("period", "overnight")
     if period not in ("overnight", "daytime"):
         return jsonify({"error": "period must be 'overnight' or 'daytime'"}), 400
-    result = send_message_summary(period=period)
+    digest_only = request.args.get("digest_only", "").lower() in ("true", "1", "yes")
+    result = send_message_summary(period=period, digest_only=digest_only)
     return jsonify(result)
 
 
