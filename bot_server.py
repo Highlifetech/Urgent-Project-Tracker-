@@ -1008,43 +1008,50 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 Summarize these messages for Brendan (the founder). Be VERY detailed — capture every key point, who said what, statuses, and deadlines.
 
-FORMAT STRUCTURE — follow this exactly:
-
-Group by PERSON first (Hannah, Lucy, Carlo, Brieanne, Others). Skip any person with no messages.
-Under each person, group by TOPIC. Use this structure:
+FORMAT — you MUST follow this exact structure with ## headers and bullet points:
 
 **HANNAH**
 
-**TOPIC NAME** \ud83d\udea8 (add emoji only if urgent)
-• **Name**: What they said or did
-• **Name**: Their response
+## TOPIC NAME \ud83d\udea8
+• **Brendan**: What he said or asked
+• **Hannah**: Her response or action
 • **Status**: Current state of this topic
-• **URGENT**: Any deadline or critical info (if applicable)
+• **URGENT**: Any deadline or critical info
 
-(blank line between topics)
+## NEXT TOPIC
+• **Person**: Detail about what they said
+• **Person**: Their response
+• **Status**: Where things stand
 
-**NEXT TOPIC NAME**
-• **Name**: Detail
-• **Name**: Detail
+(repeat for each topic)
+
+**LUCY**
+(same ## + bullet format)
+
+**CARLO**
+(same ## + bullet format)
+
+**BRIEANNE**
+(same ## + bullet format)
+
+**OTHERS**
+(same ## + bullet format)
 
 ---
-
-After all people sections, end with:
-
-**CRITICAL FOLLOW-UPS** \u26a0\ufe0f
+## CRITICAL FOLLOW-UPS \u26a0\ufe0f
 1. **Item name** - What needs to happen
 2. **Item name** - What needs to happen
 
-**Communication Issue**: Any frustrations or gaps noted (if any)
+**Communication Issue**: Note any frustrations or gaps (if any)
 
-RULES:
-- Use **bold** for names, topics, labels — NEVER use underline
-- Use ## for section headers (## TOPIC NAME) to create visual separation
-- Use bullet points (•) for detail lines under each topic
-- Include every key detail — quantities, dates, costs, who said what
-- Be thorough — Brendan relies on this to know everything that happened
-- Mark urgent items with \ud83d\udea8 emoji
-- Add a blank line between each topic section for readability"""
+STRICT RULES:
+- MUST use ## for every topic header — this creates visual separation
+- MUST use bullet points (•) with **bold names** for every detail line
+- Include who said what on EVERY topic — never summarize as a paragraph
+- Include quantities, dates, costs, item names — be thorough
+- Add \ud83d\udea8 emoji to urgent topics
+- Skip any person section that has no messages
+- NEVER write paragraph summaries — always use the ## header + bullet format above"""
 
     try:
         prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
@@ -1114,42 +1121,37 @@ def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
                 transcript = transcript[:20000] + "\n... (truncated)"
             prompt = f"""Summarize the following messages from {person_label}'s channels for Brendan. Period: {period_label}.
 
-Be VERY detailed — capture every key point, who said what, statuses, deadlines, and quantities.
+Be VERY detailed. You MUST use this exact format with ## headers and bullet points:
 
-FORMAT — follow this exactly:
-
-## TOPIC NAME \ud83d\udea8 (add emoji only if urgent)
-• **Brendan**: What Brendan said or asked
-• **{person_label}**: What they responded
+## TOPIC NAME \ud83d\udea8
+• **Brendan**: What he said or asked
+• **{person_label}**: Her response or action  
 • **Status**: Current state
 • **URGENT**: Any deadline (if applicable)
 
-(blank line between each topic)
-
 ## NEXT TOPIC
-• **Name**: Detail
-• **Name**: Detail
+• **Person**: What they said
+• **Person**: Their response
 
 ---
-
-**CRITICAL FOLLOW-UPS** \u26a0\ufe0f
+## CRITICAL FOLLOW-UPS \u26a0\ufe0f
 1. **Item** - What needs to happen
 2. **Item** - What needs to happen
 
-RULES:
-- Use **bold** for names and labels — NEVER use underline
-- Use ## for topic headers to create visual separation
-- Use bullet points (•) for details under each topic
-- Include quantities, dates, costs, who said what — be thorough
-- Mark urgent items with \ud83d\udea8
-- Add blank lines between topic sections for readability
+STRICT RULES:
+- MUST use ## for every topic header
+- MUST use bullet points (•) with **bold names** for details
+- Include who said what — never summarize as a paragraph
+- Include quantities, dates, costs — be thorough
+- Add \ud83d\udea8 to urgent topics
+- NEVER write paragraph summaries
 
 {transcript}"""
             prompt = re.sub(r"[\ud800-\udfff]", "", prompt)
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             resp = client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=2000,
+                max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}],
             )
             summary_text = resp.content[0].text if resp.content else ""
