@@ -1048,8 +1048,15 @@ RULES:
 
 def _build_message_summary_card(summary_text, period_label, channel_stats):
     """Build a Lark card for the message summary."""
-    emoji = "\ud83c\udf19" if "overnight" in period_label.lower() else "\u2600\ufe0f"
-    template = "indigo" if "overnight" in period_label.lower() else "orange"
+    if "overnight" in period_label.lower():
+        emoji = "\ud83c\udf19"  # moon
+        template = "indigo"
+    elif "midday" in period_label.lower():
+        emoji = "\u2600\ufe0f"  # sun
+        template = "orange"
+    else:
+        emoji = "\ud83c\udf07"  # sunset/evening
+        template = "purple"
 
     total_msgs = sum(channel_stats.values())
     active_channels = [f"{label}: **{count}**" for label, count in channel_stats.items() if count > 0]
@@ -1101,7 +1108,7 @@ def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
             prompt = f"""Summarize the following messages from {person_label}'s channels for Brendan. Period: {period_label}.
 
 List each topic like this:
-**Topic Name** \u2014 Detailed summary. Who said what, current status, deadlines, quantities. (2-3 sentences max)
+**Topic Name** \u2014 Detailed summary. Who said what, current status, deadlines, quantities. (1-2 sentences max)
 
 Put a blank line between each topic for readability.
 
@@ -1128,7 +1135,7 @@ RULES:
             if not summary_text:
                 continue
             # Build and send card
-            emoji = "\U0001f319" if "Overnight" in period_label else "\U0001f31e"
+            emoji = "\U0001f319" if "Overnight" in period_label else ("\u2600\ufe0f" if "Midday" in period_label else "\U0001f307")
             card = {
                 "config": {"wide_screen_mode": True},
                 "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update — {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
@@ -1144,7 +1151,7 @@ RULES:
 
 def send_message_summary(period="overnight", digest_only=False):
     """Fetch messages from ALL team channels, summarize, and send to digest channel.
-    period: 'overnight' (12am-5:30am) or 'daytime' (5:30am-7pm)
+    period: 'overnight' (12am-5:30am), 'midday' (5:30am-12pm), or 'evening' (12pm-now)
     """
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
@@ -1156,14 +1163,20 @@ def send_message_summary(period="overnight", digest_only=False):
         today_530am = now.replace(hour=5, minute=30, second=0, microsecond=0)
         start_ts = int(today_midnight.timestamp())
         end_ts = int(today_530am.timestamp())
-        period_label = "Overnight Message Summary (12 AM \u2014 5:30 AM)"
-    else:
-        # 5:30am today to 7pm today
+        period_label = "Overnight Summary (12 AM \u2014 5:30 AM)"
+    elif period == "midday":
+        # 5:30am to 12pm today
         today_530am = now.replace(hour=5, minute=30, second=0, microsecond=0)
-        today_7pm = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        today_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
         start_ts = int(today_530am.timestamp())
-        end_ts = int(today_7pm.timestamp())
-        period_label = "Daytime Message Summary (5:30 AM \u2014 7 PM)"
+        end_ts = int(today_noon.timestamp())
+        period_label = "Midday Summary (5:30 AM \u2014 12 PM)"
+    else:
+        # evening: 12pm to now
+        today_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+        start_ts = int(today_noon.timestamp())
+        end_ts = int(now.timestamp())
+        period_label = "Evening Summary (12 PM \u2014 12 AM)"
 
     logger.info(f"Message summary [{period}]: fetching {start_ts} to {end_ts}")
 
@@ -2080,14 +2093,24 @@ def _scheduled_morning_digest():
         logger.error(f"SCHEDULER: Digest error: {e}")
 
 
-def _scheduled_afternoon_recap():
-    """Triggered by APScheduler at 7pm ET Mon-Fri."""
-    logger.info("SCHEDULER: Afternoon recap triggered at 7pm ET")
+def _scheduled_midday_recap():
+    """Triggered by APScheduler at 12pm ET Mon-Fri."""
+    logger.info("SCHEDULER: Midday recap triggered at 12pm ET")
     try:
-        send_message_summary(period="daytime")
-        logger.info("SCHEDULER: Afternoon message summary sent")
+        send_message_summary(period="midday")
+        logger.info("SCHEDULER: Midday message summary sent")
     except Exception as e:
-        logger.error(f"SCHEDULER: Afternoon summary error: {e}")
+        logger.error(f"SCHEDULER: Midday summary error: {e}")
+
+
+def _scheduled_evening_recap():
+    """Triggered by APScheduler at 11:55pm ET Mon-Fri."""
+    logger.info("SCHEDULER: Evening recap triggered at 11:55pm ET")
+    try:
+        send_message_summary(period="evening")
+        logger.info("SCHEDULER: Evening message summary sent")
+    except Exception as e:
+        logger.error(f"SCHEDULER: Evening summary error: {e}")
 
 
 def _start_background_tasks():
@@ -2114,13 +2137,19 @@ def _start_background_tasks():
             replace_existing=True,
         )
         scheduler.add_job(
-            _scheduled_afternoon_recap,
-            CronTrigger(hour=19, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
-            id="afternoon_recap",
+            _scheduled_midday_recap,
+            CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            id="midday_recap",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            _scheduled_evening_recap,
+            CronTrigger(hour=23, minute=55, day_of_week="mon-fri", timezone="America/New_York"),
+            id="evening_recap",
             replace_existing=True,
         )
         scheduler.start()
-        logger.info("APScheduler started: morning digest 8AM + afternoon recap 5PM ET, Mon-Fri")
+        logger.info("APScheduler started: morning 5:30AM + midday 12PM + evening 11:55PM ET, Mon-Fri")
     except Exception as e:
         logger.error(f"APScheduler setup error: {e}")
 
