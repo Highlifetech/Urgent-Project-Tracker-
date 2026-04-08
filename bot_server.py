@@ -1144,26 +1144,26 @@ RULES:
 
 def send_message_summary(period="overnight", digest_only=False):
     """Fetch messages from ALL team channels, summarize, and send to digest channel.
-    period: 'overnight' (12am-8am) or 'daytime' (8am-5pm)
+    period: 'overnight' (12am-5:30am) or 'daytime' (5:30am-7pm)
     """
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
     now = datetime.now(et)
 
     if period == "overnight":
-        # 12am (midnight) to 8am today
+        # 12am (midnight) to 5:30am today
         today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        today_530am = now.replace(hour=5, minute=30, second=0, microsecond=0)
         start_ts = int(today_midnight.timestamp())
-        end_ts = int(today_8am.timestamp())
-        period_label = "Overnight Message Summary (12 AM \u2014 8 AM)"
+        end_ts = int(today_530am.timestamp())
+        period_label = "Overnight Message Summary (12 AM \u2014 5:30 AM)"
     else:
-        # 8am today to 5pm today
-        today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        today_5pm = now.replace(hour=17, minute=0, second=0, microsecond=0)
-        start_ts = int(today_8am.timestamp())
-        end_ts = int(today_5pm.timestamp())
-        period_label = "Daytime Message Summary (8 AM \u2014 5 PM)"
+        # 5:30am today to 7pm today
+        today_530am = now.replace(hour=5, minute=30, second=0, microsecond=0)
+        today_7pm = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        start_ts = int(today_530am.timestamp())
+        end_ts = int(today_7pm.timestamp())
+        period_label = "Daytime Message Summary (5:30 AM \u2014 7 PM)"
 
     logger.info(f"Message summary [{period}]: fetching {start_ts} to {end_ts}")
 
@@ -2037,14 +2037,14 @@ def _comment_poll_loop():
 # BUILT-IN DAILY SCHEDULER (runs inside Railway, no GitHub Actions needed)
 # =========================================================================
 def _scheduled_morning_digest():
-    """Triggered by APScheduler at 8am ET Mon-Fri."""
+    """Triggered by APScheduler at 5:30am ET Mon-Fri."""
     global _last_digest_sent
     now_ts = time.time()
     if now_ts - _last_digest_sent < 3600:
         logger.info(f"SCHEDULER: Digest already sent {int(now_ts - _last_digest_sent)}s ago, skipping duplicate")
         return
     _last_digest_sent = now_ts
-    logger.info("SCHEDULER: Morning digest triggered at 8am ET")
+    logger.info("SCHEDULER: Morning digest triggered at 5:30am ET")
     try:
         global _projects_cache_time
         _projects_cache_time = 0
@@ -2081,8 +2081,8 @@ def _scheduled_morning_digest():
 
 
 def _scheduled_afternoon_recap():
-    """Triggered by APScheduler at 5pm ET Mon-Fri."""
-    logger.info("SCHEDULER: Afternoon recap triggered at 5pm ET")
+    """Triggered by APScheduler at 7pm ET Mon-Fri."""
+    logger.info("SCHEDULER: Afternoon recap triggered at 7pm ET")
     try:
         send_message_summary(period="daytime")
         logger.info("SCHEDULER: Afternoon message summary sent")
@@ -2109,13 +2109,13 @@ def _start_background_tasks():
         scheduler = BackgroundScheduler(daemon=True)
         scheduler.add_job(
             _scheduled_morning_digest,
-            CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            CronTrigger(hour=5, minute=30, day_of_week="mon-fri", timezone="America/New_York"),
             id="morning_digest",
             replace_existing=True,
         )
         scheduler.add_job(
             _scheduled_afternoon_recap,
-            CronTrigger(hour=17, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            CronTrigger(hour=19, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
             id="afternoon_recap",
             replace_existing=True,
         )
