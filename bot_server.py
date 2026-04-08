@@ -485,7 +485,7 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
-        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
 
     elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
 
@@ -558,7 +558,7 @@ def build_project_update_request_card(order_num, assigned_to, table_id, record_i
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
-        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to}}
+        resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
 
     elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
 
@@ -1159,9 +1159,13 @@ def handle_card_callback(body):
             return {"toast": {"type": "info", "content": "Already resolved"}}
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
+        tid = action_value.get("table_id", "")
+        rid = action_value.get("record_id", "")
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
-            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked **{order_num}** as resolved \u2014 {now_str}"}]}
+            link = record_link(tid, rid) if tid and rid else ""
+            order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
+            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked {order_display} as resolved \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
@@ -1171,9 +1175,13 @@ def handle_card_callback(body):
         _mark_action_clicked(action_str, operator_name)
         order_num = action_value.get("order_num", "")
         assigned_to = action_value.get("assigned_to", "")
+        tid = action_value.get("table_id", "")
+        rid = action_value.get("record_id", "")
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
-            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Update Request Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the update request for **{order_num}** \u2014 {now_str}"}]}
+            link = record_link(tid, rid) if tid and rid else ""
+            order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
+            confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Update Request Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the update request for {order_display} \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
@@ -1429,7 +1437,7 @@ def _handle_incoming_card(msg, sender):
             "tag": "button",
             "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
             "type": "primary",
-            "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
+            "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id},
         }
 
     ironbot_card = {
@@ -1553,7 +1561,7 @@ def _poll_update_request_cards():
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
                 "type": "primary",
-                "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
+                "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id},
             }
 
             ironbot_card = {
