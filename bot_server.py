@@ -2040,6 +2040,35 @@ def test_google_briefing():
 def index():
     return jsonify({"code": 0, "bot": "Iron Bot v4.10", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries"]})
 
+@app.route("/diag-google", methods=["GET"])
+def diag_google():
+    """Diagnostic: test Google API connection and return raw results."""
+    import traceback
+    result = {"creds_env_set": bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS", "")),
+              "delegated_user": os.environ.get("GOOGLE_DELEGATED_USER", "NOT SET")}
+    # Test credentials
+    try:
+        from google_client import _get_credentials
+        creds = _get_credentials()
+        result["creds_ok"] = creds is not None
+    except Exception as e:
+        result["creds_error"] = traceback.format_exc()
+    # Test calendar
+    try:
+        meetings = get_todays_meetings()
+        result["meetings_count"] = len(meetings)
+        result["meetings"] = meetings
+    except Exception as e:
+        result["calendar_error"] = traceback.format_exc()
+    # Test gmail
+    try:
+        emails = get_recent_emails(hours_back=14)
+        result["emails_count"] = len(emails)
+        result["email_subjects"] = [e.get("subject", "") for e in emails[:5]]
+    except Exception as e:
+        result["gmail_error"] = traceback.format_exc()
+    return jsonify(result)
+
 
 # =========================================================================
 # STARTUP — guarded to prevent double-init
