@@ -2025,6 +2025,16 @@ def debug_artwork():
 def health():
     return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.10"})
 
+@app.route("/test-google-briefing", methods=["GET"])
+def test_google_briefing():
+    """Temporary test endpoint for Google Calendar & Gmail briefing."""
+    try:
+        _scheduled_google_morning_briefing()
+        return jsonify({"status": "ok", "message": "Morning briefing sent"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 
 @app.route("/", methods=["GET"])
 def index():
