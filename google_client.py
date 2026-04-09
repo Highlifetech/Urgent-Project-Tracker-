@@ -33,7 +33,7 @@ def _get_credentials():
         logger.error("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS env var is empty")
         return None
     try:
-        info = json.loads(GOOGLE_SERVICE_ACCOUNT_CREDENTIALS)
+        info = json.loads(GOOGLE_SERVICE_ACCOUNT_CREDENTIALS.strip())
         # Fix private key newlines (common issue with env var storage)
         if "private_key" in info:
             info["private_key"] = info["private_key"].replace("\\n", "\n")
