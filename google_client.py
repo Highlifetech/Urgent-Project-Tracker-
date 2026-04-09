@@ -32,6 +32,9 @@ def _get_credentials():
         return None
     try:
         info = json.loads(GOOGLE_SERVICE_ACCOUNT_CREDENTIALS)
+                # Fix private key newlines (common issue with env var storage)
+        if "private_key" in info:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
         creds = service_account.Credentials.from_service_account_info(
             info, scopes=ALL_SCOPES
         )
@@ -39,6 +42,7 @@ def _get_credentials():
         return delegated
     except Exception as e:
         logger.error(f"Failed to build Google credentials: {e}")
+            import traceback; logger.error(traceback.format_exc())
         return None
 
 
