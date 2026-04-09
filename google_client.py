@@ -1,5 +1,6 @@
 """
 Google Calendar & Gmail client for Iron Bot.
+
 Uses a service account with domain-wide delegation to read
 Brendan's calendar events and flag important emails.
 """
@@ -9,6 +10,7 @@ import json
 import logging
 import base64
 import re
+import traceback
 from datetime import datetime, timezone, timedelta
 
 from google.oauth2 import service_account
@@ -32,7 +34,7 @@ def _get_credentials():
         return None
     try:
         info = json.loads(GOOGLE_SERVICE_ACCOUNT_CREDENTIALS)
-                # Fix private key newlines (common issue with env var storage)
+        # Fix private key newlines (common issue with env var storage)
         if "private_key" in info:
             info["private_key"] = info["private_key"].replace("\\n", "\n")
         creds = service_account.Credentials.from_service_account_info(
@@ -42,9 +44,8 @@ def _get_credentials():
         return delegated
     except Exception as e:
         logger.error(f"Failed to build Google credentials: {e}")
-            import traceback; logger.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return None
-
 
 def get_todays_meetings():
     """Fetch today's Google Calendar events for the delegated user.
@@ -54,17 +55,13 @@ def get_todays_meetings():
     creds = _get_credentials()
     if not creds:
         return []
-
     try:
         service = build("calendar", "v3", credentials=creds)
-
-        # Get today's start and end in ET
         now = datetime.now(timezone.utc)
         et_offset = timedelta(hours=-4)
         et_now = now + et_offset
         today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0) - et_offset
         today_end = et_now.replace(hour=23, minute=59, second=59, microsecond=0) - et_offset
-
         time_min = today_start.isoformat()
         time_max = today_end.isoformat()
 
@@ -79,13 +76,11 @@ def get_todays_meetings():
 
         events = events_result.get("items", [])
         meetings = []
-
         for event in events:
             start_raw = event.get("start", {})
             end_raw = event.get("end", {})
             start_str = start_raw.get("dateTime", start_raw.get("date", ""))
             end_str = end_raw.get("dateTime", end_raw.get("date", ""))
-
             try:
                 if "T" in start_str:
                     st = datetime.fromisoformat(start_str)
@@ -94,7 +89,6 @@ def get_todays_meetings():
                     start_fmt = "All day"
             except Exception:
                 start_fmt = start_str
-
             try:
                 if "T" in end_str:
                     et_time = datetime.fromisoformat(end_str)
@@ -123,11 +117,9 @@ def get_todays_meetings():
 
         logger.info(f"Google Calendar: fetched {len(meetings)} meetings for today")
         return meetings
-
     except Exception as e:
         logger.error(f"Google Calendar fetch error: {e}")
         return []
-
 
 def get_recent_emails(hours_back=14):
     """Fetch recent emails from Gmail for the delegated user.
@@ -138,10 +130,8 @@ def get_recent_emails(hours_back=14):
     creds = _get_credentials()
     if not creds:
         return []
-
     try:
         service = build("gmail", "v1", credentials=creds)
-
         after_ts = int((datetime.now(timezone.utc) - timedelta(hours=hours_back)).timestamp())
         query = f"in:inbox after:{after_ts}"
 
@@ -151,18 +141,13 @@ def get_recent_emails(hours_back=14):
 
         messages = results.get("messages", [])
         emails = []
-
         for msg_ref in messages:
             msg = service.users().messages().get(
-                userId="me",
-                id=msg_ref["id"],
-                format="metadata",
+                userId="me", id=msg_ref["id"], format="metadata",
                 metadataHeaders=["From", "Subject", "Date"]
             ).execute()
-
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
             label_ids = msg.get("labelIds", [])
-
             emails.append({
                 "id": msg_ref["id"],
                 "subject": headers.get("Subject", "(No subject)"),
@@ -175,11 +160,9 @@ def get_recent_emails(hours_back=14):
 
         logger.info(f"Gmail: fetched {len(emails)} recent emails")
         return emails
-
     except Exception as e:
         logger.error(f"Gmail fetch error: {e}")
         return []
-
 
 def filter_important_emails(emails, anthropic_client=None):
     """Use Claude to identify which emails are project/business relevant.
@@ -194,7 +177,6 @@ def filter_important_emails(emails, anthropic_client=None):
         email_summaries.append(
             f"{i+1}. From: {e['from']} | Subject: {e['subject']} | Preview: {e['snippet'][:120]}"
         )
-
     email_text = "\n".join(email_summaries)
 
     try:
@@ -217,9 +199,7 @@ def filter_important_emails(emails, anthropic_client=None):
                 )
             }]
         )
-
         result_text = response.content[0].text.strip()
-
         json_match = re.search(r'\[.*\]', result_text, re.DOTALL)
         if json_match:
             important_indices = json.loads(json_match.group())
@@ -230,12 +210,9 @@ def filter_important_emails(emails, anthropic_client=None):
                     email = emails[idx].copy()
                     email["reason"] = item.get("reason", "")
                     important_emails.append(email)
-
             logger.info(f"Claude flagged {len(important_emails)}/{len(emails)} emails as important")
             return important_emails
-
         return []
-
     except Exception as e:
         logger.error(f"Claude email filter error: {e}")
         return [e for e in emails if e.get("is_unread")][:10]
