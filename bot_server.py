@@ -13,6 +13,7 @@ import psycopg2.pool
 from lark_client import LarkClient
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from google_client import get_todays_meetings, get_recent_emails, filter_important_emails
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -2033,6 +2034,86 @@ def index():
 # =========================================================================
 # STARTUP — guarded to prevent double-init
 # =========================================================================
+
+def _scheduled_google_morning_briefing():
+    """8 AM ET: Calendar + important emails briefing to Founders channel."""
+    logger.info("SCHEDULER: Google morning briefing triggered at 8am ET")
+    try:
+        meetings = get_todays_meetings()
+        emails = get_recent_emails(hours_back=14)
+        important = filter_important_emails(emails, anthropic_client)
+        if meetings:
+            meet_lines = []
+            for m in meetings:
+                time_str = f"{m['start']}" + (f" - {m['end']}" if m['end'] else "")
+                attendees = ", ".join(m['attendees'][:5]) if m['attendees'] else ""
+                line = f"**{time_str}** \u2014 {m['summary']}"
+                if attendees:
+                    line += f"\n  _With: {attendees}_"
+                if m.get('meet_link'):
+                    line += f"\n  [Join Meeting]({m['meet_link']})"
+                meet_lines.append(line)
+            meetings_md = "\n\n".join(meet_lines)
+        else:
+            meetings_md = "_No meetings scheduled today._"
+        if important:
+            email_lines = []
+            for e in important:
+                sender = e['from'].split('<')[0].strip().strip('"')
+                email_lines.append(f"\u2022 **{e['subject']}**\n  From: {sender}\n  _{e.get('reason', '')}_")
+            emails_md = "\n\n".join(email_lines)
+        else:
+            emails_md = "_No important emails flagged._"
+        now_str = _est_now().strftime("%A, %B %d, %Y")
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": "\u2600\ufe0f GOOD MORNING \u2014 Daily Briefing"}, "template": "blue"},
+            "elements": [
+                {"tag": "markdown", "content": f"**{now_str}** | 8:00 AM ET\n---"},
+                {"tag": "markdown", "content": f"**\ud83d\udcc5 Today's Meetings ({len(meetings)})**\n\n{meetings_md}"},
+                {"tag": "hr"},
+                {"tag": "markdown", "content": f"**\ud83d\udce7 Important Emails ({len(important)})**\n\n{emails_md}"},
+            ]
+        }
+        target = FOUNDERS_CHAT or DIGEST_CHAT
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info("Google morning briefing sent to Founders channel")
+    except Exception as e:
+        logger.error(f"Google morning briefing error: {e}")
+
+
+def _scheduled_google_evening_briefing():
+    """7 PM ET: Evening email recap to Founders channel."""
+    logger.info("SCHEDULER: Google evening briefing triggered at 7pm ET")
+    try:
+        emails = get_recent_emails(hours_back=10)
+        important = filter_important_emails(emails, anthropic_client)
+        if important:
+            email_lines = []
+            for e in important:
+                sender = e['from'].split('<')[0].strip().strip('"')
+                email_lines.append(f"\u2022 **{e['subject']}**\n  From: {sender}\n  _{e.get('reason', '')}_")
+            emails_md = "\n\n".join(email_lines)
+        else:
+            emails_md = "_No important emails since this morning._"
+        now_str = _est_now().strftime("%A, %B %d, %Y")
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": "\ud83c\udf19 EVENING RECAP"}, "template": "indigo"},
+            "elements": [
+                {"tag": "markdown", "content": f"**{now_str}** | 7:00 PM ET\n---"},
+                {"tag": "markdown", "content": f"**\ud83d\udce7 Important Emails Today ({len(important)})**\n\n{emails_md}"},
+            ]
+        }
+        target = FOUNDERS_CHAT or DIGEST_CHAT
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info("Google evening briefing sent to Founders channel")
+    except Exception as e:
+        logger.error(f"Google evening briefing error: {e}")
+
+
 _background_started = False
 _last_digest_sent = 0  # Unix timestamp of last digest send (dedup guard)
 
@@ -2157,8 +2238,20 @@ def _start_background_tasks():
             id="evening_recap",
             replace_existing=True,
         )
+        scheduler.add_job(
+            _scheduled_google_morning_briefing,
+            CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            id="google_morning_briefing",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            _scheduled_google_evening_briefing,
+            CronTrigger(hour=19, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            id="google_evening_briefing",
+            replace_existing=True,
+        )
         scheduler.start()
-        logger.info("APScheduler started: morning 5:30AM + midday 12PM + evening 11:55PM ET, Mon-Fri")
+        logger.info("APScheduler started: morning 5:30AM + midday 12PM + evening 11:55PM + google 8AM/7PM ET, Mon-Fri")
     except Exception as e:
         logger.error(f"APScheduler setup error: {e}")
 
