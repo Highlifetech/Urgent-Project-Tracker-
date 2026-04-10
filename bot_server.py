@@ -322,7 +322,8 @@ def get_assigned_from_table(table_name):
 LARGE_CLIENT_TABLES = [
     "invisible north", "tpd design house", "7brew coffee", "cal jewellery",
     "mfused", "craftworks", "denim tears", "liquid death", "vees clothing",
-    "unjust jewelry", "wildfang",
+    "unjust jewelry", "wildfang", "live fast die young", "godspeed",
+    "steady hands", "half evil", "righteous", "ian charms",
 ]
 
 
