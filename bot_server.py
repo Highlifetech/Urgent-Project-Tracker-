@@ -274,7 +274,7 @@ def get_due_date_raw(fields):
 
 
 def record_link(table_id, record_id):
-    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&record={record_id}"
+    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&record={record_id}&modal=expand"
 
 
 def field_to_text(val):
