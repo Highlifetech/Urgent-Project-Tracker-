@@ -5,6 +5,7 @@ import re
 import time
 import threading
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify
 import anthropic
 import psycopg2
@@ -559,7 +560,7 @@ def handle_review_button(table_id, record_id):
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name=""):
-    """Project Update Request card — matches the purple card style sent to Hannah/Lucy.
+    """Project Update Request card â matches the purple card style sent to Hannah/Lucy.
     Includes View Record + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
@@ -898,7 +899,7 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
-# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) — ALL CHANNELS
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) â ALL CHANNELS
 # =========================================================================
 
 # All channels to scan for message summaries (label -> chat_id)
@@ -1017,7 +1018,7 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder). Be concise but informative — focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
+Summarize these messages for Brendan (the founder). Be concise but informative â focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
 
 Organize by PERSON in this order: **HANNAH/CHEN**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages).
 
@@ -1039,8 +1040,8 @@ RULES:
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
-- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points — just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** — Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
-- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section — Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
+- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points â just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** â Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
+- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section â Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
 - The ONLY allowed person headers are: HANNAH, LUCY, CARLO, BRIEANNE, OTHERS. Never create other headers like DESIGN, INBOUND, etc."""
 
     try:
@@ -1149,7 +1150,7 @@ RULES:
             emoji = "\U0001f319" if "Overnight" in period_label else ("\u2600\ufe0f" if "Midday" in period_label else "\U0001f307")
             card = {
                 "config": {"wide_screen_mode": True},
-                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update — {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
+                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update â {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
                 "elements": [
                     {"tag": "markdown", "content": summary_text},
                 ],
@@ -2069,7 +2070,7 @@ def diag_google():
 
 
 # =========================================================================
-# STARTUP — guarded to prevent double-init
+# STARTUP â guarded to prevent double-init
 # =========================================================================
 
 def _scheduled_google_morning_briefing():
@@ -2176,15 +2177,24 @@ def _comment_poll_loop():
 # =========================================================================
 # BUILT-IN DAILY SCHEDULER (runs inside Railway, no GitHub Actions needed)
 # =========================================================================
-def _scheduled_morning_digest():
-    """Triggered by APScheduler at 5:30am ET Mon-Fri."""
+def _scheduled_combined_morning_briefing():
+    """7 AM ET Mon-Sat: Combined morning digest + Google calendar/email briefing.
+    Mon-Fri: full digest + calendar + email.  Saturday: digest only.
+    Monday editions include Sunday data (lookback adjusted).
+    Sends to Founders channel."""
     global _last_digest_sent
     now_ts = time.time()
     if now_ts - _last_digest_sent < 3600:
-        logger.info(f"SCHEDULER: Digest already sent {int(now_ts - _last_digest_sent)}s ago, skipping duplicate")
+        logger.info(f"SCHEDULER: Morning briefing already sent {int(now_ts - _last_digest_sent)}s ago, skipping")
         return
     _last_digest_sent = now_ts
-    logger.info("SCHEDULER: Morning digest triggered at 5:30am ET")
+
+    et = ZoneInfo("America/New_York")
+    now = datetime.now(et)
+    is_weekday = now.weekday() < 5  # Mon=0 .. Fri=4
+    is_monday = now.weekday() == 0
+    logger.info(f"SCHEDULER: Combined morning briefing triggered at 7am ET (weekday={is_weekday}, monday={is_monday})")
+
     try:
         global _projects_cache_time
         _projects_cache_time = 0
@@ -2192,36 +2202,81 @@ def _scheduled_morning_digest():
         if not projects:
             logger.error("SCHEDULER: No projects fetched")
             return
+
+        # --- Project Digest (Mon-Sat) ---
         digest = build_morning_digest(projects)
-        now_str = _est_now().strftime("%A, %B %d, %Y")
+        now_str = now.strftime("%A, %B %d, %Y")
         total = len(projects)
+
+        elements = [
+            {"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"},
+            {"tag": "markdown", "content": digest},
+        ]
+
+        # --- Google Calendar + Email (Mon-Fri only) ---
+        if is_weekday:
+            try:
+                meetings = get_todays_meetings()
+                hours_back = 36 if is_monday else 14  # Monday: include Sunday emails
+                emails = get_recent_emails(hours_back=hours_back)
+                important = filter_important_emails(emails, anthropic_client)
+
+                if meetings:
+                    meet_lines = []
+                    for m in meetings:
+                        time_str = f"{m['start']}" + (f" - {m['end']}" if m['end'] else "")
+                        attendees = ", ".join(m['attendees'][:5]) if m['attendees'] else ""
+                        line = f"**{time_str}** \u2014 {m['summary']}"
+                        if attendees:
+                            line += f"\n _With: {attendees}_"
+                        if m.get('meet_link'):
+                            line += f"\n [Join Meeting]({m['meet_link']})"
+                        meet_lines.append(line)
+                    meetings_md = "\n\n".join(meet_lines)
+                else:
+                    meetings_md = "_No meetings scheduled today._"
+
+                if important:
+                    email_lines = []
+                    for e in important:
+                        sender = e['from'].split('<')[0].strip().strip('"')
+                        email_lines.append(f"\u2022 **{e['subject']}**\n From: {sender}\n _{e.get('reason', '')}_")
+                    emails_md = "\n\n".join(email_lines)
+                else:
+                    emails_md = "_No important emails flagged._"
+
+                elements.append({"tag": "hr"})
+                elements.append({"tag": "markdown", "content": f"**\ud83d\udcc5 Today's Meetings ({len(meetings)})**\n\n{meetings_md}"})
+                elements.append({"tag": "hr"})
+                elements.append({"tag": "markdown", "content": f"**\ud83d\udce7 Important Emails ({len(important)})**\n\n{emails_md}"})
+                logger.info(f"SCHEDULER: Added {len(meetings)} meetings, {len(important)} emails to briefing")
+            except Exception as e:
+                logger.error(f"SCHEDULER: Google data error (continuing with digest only): {e}")
+
         card = {
             "config": {"wide_screen_mode": True},
-            "header": {"title": {"tag": "plain_text", "content": "\ud83c\udf05 IRON BOT MORNING BRIEFING"}, "template": "blue"},
-            "elements": [
-                {"tag": "markdown", "content": f"**{now_str}** | HLT Active Projects: **{total}**\n---"},
-                {"tag": "markdown", "content": digest},
-            ],
+            "header": {"title": {"tag": "plain_text", "content": "\u2600\ufe0f GOOD MORNING \u2014 Daily Briefing"}, "template": "blue"},
+            "elements": elements,
         }
-        chat_id = DIGEST_CHAT or FOUNDERS_CHAT
-        if chat_id:
-            lark.send_card(card, chat_id=chat_id)
-            logger.info(f"SCHEDULER: Digest sent ({total} records)")
+        target = FOUNDERS_CHAT or DIGEST_CHAT
+        if target:
+            lark.send_card(card, chat_id=target)
+            logger.info(f"SCHEDULER: Combined morning briefing sent to Founders ({total} projects)")
+
         send_due_date_alerts()
         logger.info("SCHEDULER: Due date alerts sent")
 
-        # Send overnight message summary alongside morning digest
+        # Send overnight message summary alongside morning briefing
         try:
             send_message_summary(period="overnight")
             logger.info("SCHEDULER: Overnight message summary sent")
         except Exception as e:
             logger.error(f"SCHEDULER: Overnight summary error: {e}")
+
     except Exception as e:
-        logger.error(f"SCHEDULER: Digest error: {e}")
-
-
+        logger.error(f"SCHEDULER: Combined morning briefing error: {e}")
 def _scheduled_midday_recap():
-    """Triggered by APScheduler at 2pm ET Mon-Fri."""
+    """Triggered by APScheduler at 2pm ET Mon-Sat."""
     logger.info("SCHEDULER: Afternoon recap triggered at 2pm ET")
     try:
         send_message_summary(period="midday")
@@ -2230,6 +2285,47 @@ def _scheduled_midday_recap():
         logger.error(f"SCHEDULER: Afternoon summary error: {e}")
 
 
+
+
+def _scheduled_evening_person_briefings():
+    """8 PM ET Mon-Sat: Send person-specific briefings.
+    Hannah's projects -> Master Production
+    Lucy's projects -> Lucy Production
+    Monday editions include Sunday data.
+    """
+    et = ZoneInfo("America/New_York")
+    now = datetime.now(et)
+    is_monday = now.weekday() == 0
+    logger.info(f"SCHEDULER: Evening person briefings triggered at 8pm ET (monday={is_monday})")
+    try:
+        channels = _get_summary_channels()
+        # Time window: 7am to 8pm today
+        today_7am = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        today_8pm = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        if is_monday:
+            # Monday: include from Sunday 7am
+            today_7am = (now - timedelta(days=1)).replace(hour=7, minute=0, second=0, microsecond=0)
+
+        start_ts = int(today_7am.timestamp())
+        end_ts = int(today_8pm.timestamp())
+
+        all_channel_msgs = {}
+        for label, chat_id in channels.items():
+            msgs = _fetch_channel_messages(chat_id, start_ts, end_ts)
+            if msgs:
+                all_channel_msgs[label] = msgs
+
+        total = sum(len(v) for v in all_channel_msgs.values())
+        logger.info(f"SCHEDULER: Evening briefings fetched {total} msgs for person summaries")
+
+        if total > 0:
+            period_label = "Evening Summary (7 AM \u2014 8 PM)"
+            _send_person_summaries(all_channel_msgs, period_label)
+            logger.info("SCHEDULER: Evening person summaries sent to Master Production & Lucy Production")
+        else:
+            logger.info("SCHEDULER: No messages for evening person briefings, skipping")
+    except Exception as e:
+        logger.error(f"SCHEDULER: Evening person briefings error: {e}")
 
 
 def _start_background_tasks():
@@ -2249,32 +2345,32 @@ def _start_background_tasks():
 
     try:
         scheduler = BackgroundScheduler(daemon=True)
+        # --- COMBINED 7 AM MORNING BRIEFING (Mon-Sat) ---
+        # Mon-Fri: digest + calendar + email.  Sat: digest only.
+        # Monday editions include Sunday data.
         scheduler.add_job(
-            _scheduled_morning_digest,
-            CronTrigger(hour=5, minute=30, day_of_week="mon-fri", timezone="America/New_York"),
-            id="morning_digest",
+            _scheduled_combined_morning_briefing,
+            CronTrigger(hour=7, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
+            id="combined_morning_briefing",
             replace_existing=True,
         )
+        # --- MIDDAY RECAP 2 PM (Mon-Sat) ---
         scheduler.add_job(
             _scheduled_midday_recap,
-            CronTrigger(hour=14, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
+            CronTrigger(hour=14, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
             id="midday_recap",
             replace_existing=True,
         )
+        # --- EVENING PERSON BRIEFINGS 8 PM (Mon-Sat) ---
+        # Hannah -> Master Production, Lucy -> Lucy Production
         scheduler.add_job(
-            _scheduled_google_morning_briefing,
-            CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
-            id="google_morning_briefing",
-            replace_existing=True,
-        )
-        scheduler.add_job(
-            _scheduled_google_evening_briefing,
-            CronTrigger(hour=19, minute=0, day_of_week="mon-fri", timezone="America/New_York"),
-            id="google_evening_briefing",
+            _scheduled_evening_person_briefings,
+            CronTrigger(hour=20, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
+            id="evening_person_briefings",
             replace_existing=True,
         )
         scheduler.start()
-        logger.info("APScheduler started: morning 5:30AM + afternoon 2PM + google 8AM/7PM ET, Mon-Fri")
+        logger.info("APScheduler started: combined morning 7AM + afternoon 2PM + evening person 8PM ET, Mon-Sat")
     except Exception as e:
         logger.error(f"APScheduler setup error: {e}")
 
