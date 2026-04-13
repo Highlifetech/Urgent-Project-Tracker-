@@ -560,7 +560,7 @@ def handle_review_button(table_id, record_id):
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name=""):
     """Project Update Request card — matches the purple card style sent to Hannah/Lucy.
-    Includes Add Update + Mark Resolved buttons."""
+    Includes View Record + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
 
@@ -570,14 +570,14 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
         {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
     ]
 
-    add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default", "url": link}
+    view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
 
-    elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
+    elements.append({"tag": "action", "actions": [view_record_btn, resolve_btn]})
 
     from_label = table_name or "PRODUCTION"
     elements.append({"tag": "markdown", "content": f"From [2026 {from_label.upper()}]({link})"})
@@ -638,14 +638,14 @@ def build_project_update_request_card(order_num, assigned_to, table_id, record_i
         {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
     ]
 
-    add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default", "url": link}
+    view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
     else:
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"}, "type": "primary", "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id}}
 
-    elements.append({"tag": "action", "actions": [add_update_btn, resolve_btn]})
+    elements.append({"tag": "action", "actions": [view_record_btn, resolve_btn]})
 
     from_label = table_name or "PRODUCTION"
     elements.append({"tag": "markdown", "content": f"From [2026 {from_label.upper()}]({link})"})
@@ -1542,7 +1542,7 @@ def _mark_card_replied(message_id):
 def _handle_incoming_card(msg, sender):
     """Handle an interactive card message received via webhook.
     If it is a Project Update Request card from Lark Base, send Iron Bot's
-    own replacement card with both Add Update and Mark Resolved buttons.
+    own replacement card with both View Record and Mark Resolved buttons.
     """
     message_id = msg.get("message_id", "")
     chat_id = msg.get("chat_id", "")
@@ -1629,13 +1629,13 @@ def _handle_incoming_card(msg, sender):
                     record_link_url = btn["url"]
                     break
 
-    add_update_btn = {
+    view_record_btn = {
         "tag": "button",
-        "text": {"tag": "plain_text", "content": "Add Update"},
+        "text": {"tag": "plain_text", "content": "View Record"},
         "type": "default",
     }
     if record_link_url:
-        add_update_btn["url"] = record_link_url
+        view_record_btn["url"] = record_link_url
 
     if _is_action_clicked(action_id):
         resolve_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Resolved \u2713"}, "type": "default", "disabled": True}
@@ -1652,7 +1652,7 @@ def _handle_incoming_card(msg, sender):
         "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
         "elements": [
             {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
-            {"tag": "action", "actions": [add_update_btn, resolve_btn]},
+            {"tag": "action", "actions": [view_record_btn, resolve_btn]},
         ],
     }
     if record_link_url:
@@ -1760,9 +1760,9 @@ def _poll_update_request_cards():
                 if link_match:
                     record_link_url = link_match.group(1)
 
-            add_update_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "Add Update"}, "type": "default"}
+            view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default"}
             if record_link_url:
-                add_update_btn["url"] = record_link_url
+                view_record_btn["url"] = record_link_url
 
             resolve_btn = {
                 "tag": "button",
@@ -1776,7 +1776,7 @@ def _poll_update_request_cards():
                 "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
                 "elements": [
                     {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
-                    {"tag": "action", "actions": [add_update_btn, resolve_btn]},
+                    {"tag": "action", "actions": [view_record_btn, resolve_btn]},
                 ],
             }
             if record_link_url:
