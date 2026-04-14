@@ -1,4 +1,4 @@
-# v4.15 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
+# v4.16 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
@@ -404,8 +404,41 @@ def get_image_key_from_field(fields, field_name="Production Artwork"):
     if not file_bytes:
         logger.warning(f"get_image_key: could not download artwork for {file_token}")
         return ""
+    # Detect image type from magic bytes
+    mime = "image/png"
+    ext = "image.png"
+    if file_bytes[:3] == b'\xff\xd8\xff':
+        mime = "image/jpeg"
+        ext = "image.jpg"
+    elif file_bytes[:4] == b'\x89PNG':
+        mime = "image/png"
+        ext = "image.png"
+    elif file_bytes[:4] == b'GIF8':
+        mime = "image/gif"
+        ext = "image.gif"
+    elif file_bytes[:4] == b'RIFF' and file_bytes[8:12] == b'WEBP':
+        mime = "image/webp"
+        ext = "image.webp"
+    logger.info(f"get_image_key: file size={len(file_bytes)} mime={mime} first_bytes={file_bytes[:8]}")
     try:
-        img_key = lark.upload_image(file_bytes)
+        # Call Lark image upload API directly with correct MIME type
+        token = lark._get_tenant_token()
+        upload_resp = _requests.post(
+            f"{lark.base_url}/open-apis/im/v1/images",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"image": (ext, file_bytes, mime)},
+            data={"image_type": "message"},
+            timeout=60
+        )
+        logger.info(f"get_image_key: upload response status={upload_resp.status_code} body={upload_resp.text[:500]}")
+        if upload_resp.status_code != 200:
+            logger.error(f"get_image_key: upload failed {upload_resp.status_code}: {upload_resp.text[:500]}")
+            return ""
+        upload_data = upload_resp.json()
+        if upload_data.get("code") != 0:
+            logger.error(f"get_image_key: upload API error: {upload_data}")
+            return ""
+        img_key = upload_data["data"]["image_key"]
         logger.info(f"get_image_key: uploaded -> {img_key}")
         return img_key
     except Exception as e:
