@@ -1,4 +1,4 @@
-# v4.16 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
+# v4.17 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
@@ -404,6 +404,22 @@ def get_image_key_from_field(fields, field_name="Production Artwork"):
     if not file_bytes:
         logger.warning(f"get_image_key: could not download artwork for {file_token}")
         return ""
+    # If the file is a PDF, convert first page to PNG using PyMuPDF
+    if file_bytes[:5] == b'%PDF-':
+        logger.info(f"get_image_key: file is PDF ({len(file_bytes)} bytes), converting first page to PNG")
+        try:
+            import fitz  # PyMuPDF
+            pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
+            page = pdf_doc[0]
+            # Render at 2x resolution for clarity
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(matrix=mat)
+            file_bytes = pix.tobytes("png")
+            pdf_doc.close()
+            logger.info(f"get_image_key: PDF converted to PNG, {len(file_bytes)} bytes")
+        except Exception as e:
+            logger.error(f"get_image_key: PDF conversion failed: {e}")
+            return ""
     # Detect image type from magic bytes
     mime = "image/png"
     ext = "image.png"
