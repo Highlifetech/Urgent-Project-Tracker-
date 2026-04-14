@@ -493,16 +493,17 @@ def handle_notify_button(table_id, record_id):
 # FEATURE 1B - PROJECT APPROVAL NEEDED -> Founders (Brendan Review button)
 # =========================================================================
 
-def build_approval_card(order_num, assigned_to, table_id, record_id, table_name=""):
+def build_approval_card(order_num, assigned_to, table_id, record_id, table_name="", image_key=""):
     """Card asking Brendan to review a project, with View Record + Mark Resolved."""
     link = record_link(table_id, record_id)
     action_id = f"approval_resolved_{table_id}_{record_id}"
 
     submitter = assigned_to or "Team"
 
-    elements = [
-        {"tag": "markdown", "content": f"Brendan,\n\n{submitter} has submitted a request for **{order_num}** to review regarding production. Please reply in the card comments."},
-    ]
+    elements = []
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+    elements.append({"tag": "markdown", "content": f"Brendan,\n\n{submitter} has submitted a request for **{order_num}** to review regarding production. Please reply in the card comments."})
 
     view_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
@@ -543,7 +544,8 @@ def handle_review_button(table_id, record_id):
         except Exception:
             pass
 
-        card = build_approval_card(order_num, assigned_to, table_id, record_id, table_name)
+        image_key = get_image_key_from_field(fields)
+        card = build_approval_card(order_num, assigned_to, table_id, record_id, table_name, image_key)
 
         target = FOUNDERS_CHAT
         if target:
@@ -559,17 +561,18 @@ def handle_review_button(table_id, record_id):
 # =========================================================================
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
-def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name=""):
-    """Project Update Request card â matches the purple card style sent to Hannah/Lucy.
+def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name="", image_key=""):
+    """Project Update Request card Ã¢ÂÂ matches the purple card style sent to Hannah/Lucy.
     Includes View Record + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
 
     names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
 
-    elements = [
-        {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
-    ]
+    elements = []
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
 
     view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
@@ -613,7 +616,8 @@ def handle_update_team_button(table_id, record_id):
                         break
             except Exception:
                 pass
-        card = build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name)
+        image_key = get_image_key_from_field(fields)
+        card = build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name, image_key)
         target = _route_card_target(table_name, assigned_to)
         if target:
             lark.send_card(card, chat_id=target)
@@ -628,16 +632,17 @@ def handle_update_team_button(table_id, record_id):
 # FEATURE 2B - PROJECT UPDATE REQUEST CARD -> Hannah/Lucy with Mark Resolved
 # =========================================================================
 
-def build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name=""):
+def build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name="", image_key=""):
     """Card asking team member to provide an update, with a Mark Resolved button."""
     link = record_link(table_id, record_id)
     action_id = f"project_update_resolved_{table_id}_{record_id}"
 
     names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
 
-    elements = [
-        {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
-    ]
+    elements = []
+    if image_key:
+        elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
+    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
 
     view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
@@ -682,7 +687,8 @@ def handle_request_update_button(table_id, record_id):
         except Exception:
             pass
 
-        card = build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name)
+        image_key = get_image_key_from_field(fields)
+        card = build_project_update_request_card(order_num, assigned_to, table_id, record_id, table_name, image_key)
 
         target = _route_card_target(table_name, assigned_to)
 
@@ -899,7 +905,7 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
-# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) â ALL CHANNELS
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) Ã¢ÂÂ ALL CHANNELS
 # =========================================================================
 
 # All channels to scan for message summaries (label -> chat_id)
@@ -1018,7 +1024,7 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder). Be concise but informative â focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
+Summarize these messages for Brendan (the founder). Be concise but informative Ã¢ÂÂ focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
 
 Organize by PERSON in this order: **HANNAH/CHEN**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages).
 
@@ -1040,8 +1046,8 @@ RULES:
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
-- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points â just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** â Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
-- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section â Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
+- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points Ã¢ÂÂ just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** Ã¢ÂÂ Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
+- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section Ã¢ÂÂ Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
 - The ONLY allowed person headers are: HANNAH, LUCY, CARLO, BRIEANNE, OTHERS. Never create other headers like DESIGN, INBOUND, etc."""
 
     try:
@@ -1150,7 +1156,7 @@ RULES:
             emoji = "\U0001f319" if "Overnight" in period_label else ("\u2600\ufe0f" if "Midday" in period_label else "\U0001f307")
             card = {
                 "config": {"wide_screen_mode": True},
-                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update â {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
+                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update Ã¢ÂÂ {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
                 "elements": [
                     {"tag": "markdown", "content": summary_text},
                 ],
@@ -2070,7 +2076,7 @@ def diag_google():
 
 
 # =========================================================================
-# STARTUP â guarded to prevent double-init
+# STARTUP Ã¢ÂÂ guarded to prevent double-init
 # =========================================================================
 
 def _scheduled_google_morning_briefing():
