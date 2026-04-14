@@ -1,4 +1,4 @@
-# v4.15 - fix garbled unicode in person summary card title + emoji check
+# v4.15 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
