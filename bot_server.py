@@ -340,12 +340,27 @@ def _route_card_target(table_name, assigned_to):
 
 
 def get_image_key_from_field(fields, field_name="Production Artwork"):
+    """Extract attachment file_token, download the file, upload as Lark image, return img_key."""
     val = fields.get(field_name)
-    if isinstance(val, list) and val:
-        first = val[0]
-        if isinstance(first, dict):
-            return first.get("file_token", first.get("token", ""))
-    return ""
+    if not isinstance(val, list) or not val:
+        return ""
+    first = val[0]
+    if not isinstance(first, dict):
+        return ""
+    file_token = first.get("file_token", first.get("token", ""))
+    if not file_token:
+        return ""
+    try:
+        file_bytes = lark.download_drive_file(file_token)
+        if not file_bytes:
+            logger.warning(f"get_image_key: empty download for {file_token}")
+            return ""
+        img_key = lark.upload_image(file_bytes)
+        logger.info(f"get_image_key: uploaded image {file_token} -> {img_key}")
+        return img_key
+    except Exception as e:
+        logger.error(f"get_image_key: failed to download/upload artwork: {e}")
+        return ""
 
 
 def parse_date_ms(val):
@@ -562,7 +577,7 @@ def handle_review_button(table_id, record_id):
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name="", image_key=""):
-    """Project Update Request card Ã¢ÂÂ matches the purple card style sent to Hannah/Lucy.
+    """Project Update Request card ÃÂ¢ÃÂÃÂ matches the purple card style sent to Hannah/Lucy.
     Includes View Record + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
@@ -905,7 +920,7 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
-# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) Ã¢ÂÂ ALL CHANNELS
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) ÃÂ¢ÃÂÃÂ ALL CHANNELS
 # =========================================================================
 
 # All channels to scan for message summaries (label -> chat_id)
@@ -1024,7 +1039,7 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder). Be concise but informative Ã¢ÂÂ focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
+Summarize these messages for Brendan (the founder). Be concise but informative ÃÂ¢ÃÂÃÂ focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
 
 Organize by PERSON in this order: **HANNAH/CHEN**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages).
 
@@ -1046,8 +1061,8 @@ RULES:
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
-- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points Ã¢ÂÂ just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** Ã¢ÂÂ Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
-- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section Ã¢ÂÂ Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
+- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points ÃÂ¢ÃÂÃÂ just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** ÃÂ¢ÃÂÃÂ Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
+- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section ÃÂ¢ÃÂÃÂ Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
 - The ONLY allowed person headers are: HANNAH, LUCY, CARLO, BRIEANNE, OTHERS. Never create other headers like DESIGN, INBOUND, etc."""
 
     try:
@@ -1156,7 +1171,7 @@ RULES:
             emoji = "\U0001f319" if "Overnight" in period_label else ("\u2600\ufe0f" if "Midday" in period_label else "\U0001f307")
             card = {
                 "config": {"wide_screen_mode": True},
-                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update Ã¢ÂÂ {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
+                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update ÃÂ¢ÃÂÃÂ {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
                 "elements": [
                     {"tag": "markdown", "content": summary_text},
                 ],
@@ -1651,7 +1666,7 @@ def _handle_incoming_card(msg, sender):
             "tag": "button",
             "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
             "type": "primary",
-            "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id},
+            "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
         }
 
     ironbot_card = {
@@ -1775,7 +1790,7 @@ def _poll_update_request_cards():
                 "tag": "button",
                 "text": {"tag": "plain_text", "content": "\u2705 Mark Resolved"},
                 "type": "primary",
-                "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to, "table_id": table_id, "record_id": record_id},
+                "value": {"action": action_id, "order_num": order_num, "assigned_to": assigned_to},
             }
 
             ironbot_card = {
@@ -2028,7 +2043,7 @@ def debug_artwork():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.11"})
+    return jsonify({"status": "ok", "bot": BOT_NAME, "bot_open_id": BOT_OPEN_ID or "loading", "version": "4.12"})
 
 @app.route("/test-google-briefing", methods=["GET"])
 def test_google_briefing():
@@ -2043,7 +2058,7 @@ def test_google_briefing():
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"code": 0, "bot": "Iron Bot v4.11", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries-v2"]})
+    return jsonify({"code": 0, "bot": "Iron Bot v4.12", "features": ["notify", "update-team", "digest", "due-alerts", "comment-alerts", "ai-chat", "message-summaries-v2"]})
 
 @app.route("/diag-google", methods=["GET"])
 def diag_google():
@@ -2076,7 +2091,7 @@ def diag_google():
 
 
 # =========================================================================
-# STARTUP Ã¢ÂÂ guarded to prevent double-init
+# STARTUP ÃÂ¢ÃÂÃÂ guarded to prevent double-init
 # =========================================================================
 
 def _scheduled_google_morning_briefing():
