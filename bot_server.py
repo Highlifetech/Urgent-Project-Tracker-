@@ -1,3 +1,4 @@
+# v4.13 - improved artwork download with tmp_url fallback
 import os
 import logging
 import json
@@ -340,26 +341,44 @@ def _route_card_target(table_name, assigned_to):
 
 
 def get_image_key_from_field(fields, field_name="Production Artwork"):
-    """Extract attachment file_token, download the file, upload as Lark image, return img_key."""
+    """Extract attachment from Lark Base, download it, upload as Lark image for cards."""
     val = fields.get(field_name)
     if not isinstance(val, list) or not val:
         return ""
     first = val[0]
     if not isinstance(first, dict):
         return ""
+    import requests as _requests
     file_token = first.get("file_token", first.get("token", ""))
-    if not file_token:
+    tmp_url = first.get("tmp_url", "")
+    logger.info(f"get_image_key: file_token={file_token} has_tmp_url={bool(tmp_url)} keys={list(first.keys())}")
+    if not file_token and not tmp_url:
+        return ""
+    file_bytes = None
+    if file_token:
+        try:
+            file_bytes = lark.download_drive_file(file_token)
+            if file_bytes:
+                logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via drive API")
+        except Exception as e:
+            logger.warning(f"get_image_key: drive download failed: {e}")
+    if not file_bytes and tmp_url:
+        try:
+            resp = _requests.get(tmp_url, timeout=30)
+            resp.raise_for_status()
+            file_bytes = resp.content
+            logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via tmp_url")
+        except Exception as e:
+            logger.warning(f"get_image_key: tmp_url download failed: {e}")
+    if not file_bytes:
+        logger.warning(f"get_image_key: could not download artwork for {file_token}")
         return ""
     try:
-        file_bytes = lark.download_drive_file(file_token)
-        if not file_bytes:
-            logger.warning(f"get_image_key: empty download for {file_token}")
-            return ""
         img_key = lark.upload_image(file_bytes)
-        logger.info(f"get_image_key: uploaded image {file_token} -> {img_key}")
+        logger.info(f"get_image_key: uploaded -> {img_key}")
         return img_key
     except Exception as e:
-        logger.error(f"get_image_key: failed to download/upload artwork: {e}")
+        logger.error(f"get_image_key: upload_image failed: {e}")
         return ""
 
 
@@ -577,7 +596,7 @@ def handle_review_button(table_id, record_id):
 # FEATURE 2 - UPDATE TEAM CARD -> Hannah/Lucy channels (Purple)
 # =========================================================================
 def build_update_team_card(order_num, description, assigned_to, table_id, record_id, table_name="", image_key=""):
-    """Project Update Request card ÃÂ¢ÃÂÃÂ matches the purple card style sent to Hannah/Lucy.
+    """Project Update Request card ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ matches the purple card style sent to Hannah/Lucy.
     Includes View Record + Mark Resolved buttons."""
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
@@ -920,7 +939,7 @@ def _build_alert_card(entries, window, assigned):
     return {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": f"\u26a0\ufe0f {title} \u2014 {assigned}"}, "template": color}, "elements": elements}
 
 # =========================================================================
-# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) ÃÂ¢ÃÂÃÂ ALL CHANNELS
+# FEATURE 5 - MESSAGE SUMMARIES (Overnight + Afternoon) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ALL CHANNELS
 # =========================================================================
 
 # All channels to scan for message summaries (label -> chat_id)
@@ -1039,7 +1058,7 @@ def _summarize_messages_with_ai(all_channel_msgs, period_label, projects_context
 
 {f"Current project status: {projects_context}" if projects_context else ""}
 
-Summarize these messages for Brendan (the founder). Be concise but informative ÃÂ¢ÃÂÃÂ focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
+Summarize these messages for Brendan (the founder). Be concise but informative ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ focus on project status, key decisions, and what needs attention. Keep each topic to 1-2 sentences max.
 
 Organize by PERSON in this order: **HANNAH/CHEN**, **LUCY**, **CARLO**, **BRIEANNE**, **OTHERS** (skip any with no messages).
 
@@ -1061,8 +1080,8 @@ RULES:
 - Always attribute who said what when summarizing conversations
 - Keep good spacing between topics (blank line between each)
 - Each person section separated by a divider line
-- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points ÃÂ¢ÃÂÃÂ just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** ÃÂ¢ÃÂÃÂ Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
-- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section ÃÂ¢ÃÂÃÂ Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
+- For CARLO: summarize ALL Carlo messages (including inbound shipment statuses) as brief paragraph topics like everyone else. Do NOT list individual shipments as bullet points ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ just summarize the overall inbound status in 2-3 sentences. Example: "**Inbound Shipments** ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Carlo reported 10 shipments in various stages. Key items: Cal Jewellery refused by importer, 7 Brew DHL delivered early, several others in transit to NJ/GA/NV."
+- "Brieanne Design" channel messages go under the BRIEANNE person section. Do NOT create a separate "DESIGN" section ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Brieanne IS the design team. Put all Brieanne Design topics under BRIEANNE.
 - The ONLY allowed person headers are: HANNAH, LUCY, CARLO, BRIEANNE, OTHERS. Never create other headers like DESIGN, INBOUND, etc."""
 
     try:
@@ -1171,7 +1190,7 @@ RULES:
             emoji = "\U0001f319" if "Overnight" in period_label else ("\u2600\ufe0f" if "Midday" in period_label else "\U0001f307")
             card = {
                 "config": {"wide_screen_mode": True},
-                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update ÃÂ¢ÃÂÃÂ {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
+                "header": {"title": {"tag": "plain_text", "content": f"{emoji} {person_label} Update ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ {period_label}"}, "template": "blue" if person == "Hannah" else "purple"},
                 "elements": [
                     {"tag": "markdown", "content": summary_text},
                 ],
@@ -2091,7 +2110,7 @@ def diag_google():
 
 
 # =========================================================================
-# STARTUP ÃÂ¢ÃÂÃÂ guarded to prevent double-init
+# STARTUP ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ guarded to prevent double-init
 # =========================================================================
 
 def _scheduled_google_morning_briefing():
@@ -2380,7 +2399,7 @@ def _start_background_tasks():
             _scheduled_midday_recap,
             CronTrigger(hour=14, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
             id="midday_recap",
-            replace_existing=True,
+            replace_existing=True,  # v4.13
         )
         # --- EVENING PERSON BRIEFINGS 8 PM (Mon-Sat) ---
         # Hannah -> Master Production, Lucy -> Lucy Production
