@@ -1,4 +1,4 @@
-# v4.13 - improved artwork download with tmp_url fallback
+# v4.14 - fix artwork download: use url field directly + auth headers for tmp_url
 import os
 import logging
 import json
@@ -351,25 +351,56 @@ def get_image_key_from_field(fields, field_name="Production Artwork"):
     import requests as _requests
     file_token = first.get("file_token", first.get("token", ""))
     tmp_url = first.get("tmp_url", "")
-    logger.info(f"get_image_key: file_token={file_token} has_tmp_url={bool(tmp_url)} keys={list(first.keys())}")
-    if not file_token and not tmp_url:
+    direct_url = first.get("url", "")
+    logger.info(f"get_image_key: file_token={file_token} has_tmp_url={bool(tmp_url)} has_url={bool(direct_url)} keys={list(first.keys())}")
+    if not file_token and not tmp_url and not direct_url:
         return ""
     file_bytes = None
-    if file_token:
+    # Strategy 1: Use the 'url' field directly (often a direct download link)
+    if not file_bytes and direct_url:
+        try:
+            resp = _requests.get(direct_url, timeout=30)
+            resp.raise_for_status()
+            file_bytes = resp.content
+            logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via direct url field")
+        except Exception as e:
+            logger.warning(f"get_image_key: direct url download failed: {e}")
+    # Strategy 2: Use tmp_url WITH auth headers (it's a Lark API endpoint)
+    if not file_bytes and tmp_url:
+        try:
+            auth_headers = {"Authorization": f"Bearer {lark._get_tenant_token()}"}
+            resp = _requests.get(tmp_url, headers=auth_headers, timeout=30)
+            resp.raise_for_status()
+            # Check if response is JSON (contains download URLs) or direct bytes
+            ct = resp.headers.get("Content-Type", "")
+            if "application/json" in ct:
+                jdata = resp.json()
+                logger.info(f"get_image_key: tmp_url returned JSON: code={jdata.get('code')}")
+                tmp_urls = jdata.get("data", {}).get("tmp_download_urls", [])
+                if isinstance(tmp_urls, list) and tmp_urls:
+                    actual_url = tmp_urls[0] if isinstance(tmp_urls[0], str) else tmp_urls[0].get("tmp_download_url", "")
+                elif isinstance(tmp_urls, dict):
+                    actual_url = list(tmp_urls.values())[0] if tmp_urls else ""
+                else:
+                    actual_url = ""
+                if actual_url:
+                    resp2 = _requests.get(actual_url, timeout=60)
+                    resp2.raise_for_status()
+                    file_bytes = resp2.content
+                    logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via tmp_download_url")
+            else:
+                file_bytes = resp.content
+                logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via tmp_url direct")
+        except Exception as e:
+            logger.warning(f"get_image_key: tmp_url download failed: {e}")
+    # Strategy 3: Try drive API download as last resort
+    if not file_bytes and file_token:
         try:
             file_bytes = lark.download_drive_file(file_token)
             if file_bytes:
                 logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via drive API")
         except Exception as e:
             logger.warning(f"get_image_key: drive download failed: {e}")
-    if not file_bytes and tmp_url:
-        try:
-            resp = _requests.get(tmp_url, timeout=30)
-            resp.raise_for_status()
-            file_bytes = resp.content
-            logger.info(f"get_image_key: downloaded {len(file_bytes)} bytes via tmp_url")
-        except Exception as e:
-            logger.warning(f"get_image_key: tmp_url download failed: {e}")
     if not file_bytes:
         logger.warning(f"get_image_key: could not download artwork for {file_token}")
         return ""
@@ -380,7 +411,6 @@ def get_image_key_from_field(fields, field_name="Production Artwork"):
     except Exception as e:
         logger.error(f"get_image_key: upload_image failed: {e}")
         return ""
-
 
 def parse_date_ms(val):
     if isinstance(val, (int, float)) and val > 1000000000:
