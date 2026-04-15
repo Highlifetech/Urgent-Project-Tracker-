@@ -1,4 +1,4 @@
-# v4.17 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
+# v4.18 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
@@ -885,24 +885,12 @@ def build_morning_digest(projects):
 
     logger.info(f"Digest stats: {len(seen)} unique orders, {skipped_no_order} skipped (no order#), {skipped_no_status} skipped (no status), {total_active} active")
 
-    s = [f"**\ud83d\udcca Project Overview** | Active Projects: **{total_active}**"]
-    for st, c in sorted(status_counts.items(), key=lambda x: -x[1]):
-        su = st.upper()
-        if su in ("QUOTE NEEDED", "IN PRODUCTION", "PART SHIPPED", "SHIPPED"):
-            emoji = "\ud83d\udd35"
-        elif su in ("QUOTED", "PART CONFIRMED"):
-            emoji = "\ud83d\udfe2"
-        elif su in ("PENDING ARTWORK", "ARTWORK CONFIRMED"):
-            emoji = "\ud83d\udfe0"
-        elif su == "ON HOLD":
-            emoji = "\ud83d\udfe1"
-        elif su in ("NEEDS REVISION", "NEEDS RESOLUTION"):
-            emoji = "\ud83d\udfe3"
-        elif su == "CANCELLED":
-            emoji = "\ud83d\udd34"
-        else:
-            emoji = "\u26aa"
-        s.append(f"  {emoji} {st}: **{c}**")
+    # Show only action-needed statuses in the overview
+    pending_art_count = sum(v for k, v in status_counts.items() if k.upper() == "PENDING ARTWORK")
+    needs_resolution_count = sum(v for k, v in status_counts.items() if k.upper() == "NEEDS RESOLUTION")
+    needs_revision_count = sum(v for k, v in status_counts.items() if k.upper() == "NEEDS REVISION")
+    on_hold_count = sum(v for k, v in status_counts.items() if k.upper() == "ON HOLD")
+    s = [f"\ud83d\udfe0 Pending Artwork: **{pending_art_count}** | \ud83d\udfe3 Needs Resolution: **{needs_resolution_count}** | \ud83d\udfe3 Needs Revision: **{needs_revision_count}** | \ud83d\udfe1 On Hold: **{on_hold_count}**"]
 
     s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
     if waiting_art:
