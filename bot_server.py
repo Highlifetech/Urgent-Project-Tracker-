@@ -1,4 +1,4 @@
-# v4.19 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
+# v4.20 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
@@ -411,8 +411,8 @@ def get_image_key_from_field(fields, field_name="Production Artwork"):
             import fitz  # PyMuPDF
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             page = pdf_doc[0]
-            # Render at 2x resolution for clarity
-            mat = fitz.Matrix(2, 2)
+            # Render at 0.5x resolution for compact card display
+            mat = fitz.Matrix(0.5, 0.5)
             pix = page.get_pixmap(matrix=mat)
             file_bytes = pix.tobytes("png")
             pdf_doc.close()
