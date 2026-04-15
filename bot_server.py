@@ -1,4 +1,4 @@
-# v4.18 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
+# v4.19 - fix garbled unicode in person summary card title + emoji check + redeploy trigger
 import os
 import logging
 import json
@@ -885,12 +885,18 @@ def build_morning_digest(projects):
 
     logger.info(f"Digest stats: {len(seen)} unique orders, {skipped_no_order} skipped (no order#), {skipped_no_status} skipped (no status), {total_active} active")
 
-    # Show only action-needed statuses in the overview
-    pending_art_count = sum(v for k, v in status_counts.items() if k.upper() == "PENDING ARTWORK")
-    needs_resolution_count = sum(v for k, v in status_counts.items() if k.upper() == "NEEDS RESOLUTION")
-    needs_revision_count = sum(v for k, v in status_counts.items() if k.upper() == "NEEDS REVISION")
-    on_hold_count = sum(v for k, v in status_counts.items() if k.upper() == "ON HOLD")
-    s = [f"\ud83d\udfe0 Pending Artwork: **{pending_art_count}** | \ud83d\udfe3 Needs Resolution: **{needs_resolution_count}** | \ud83d\udfe3 Needs Revision: **{needs_revision_count}** | \ud83d\udfe1 On Hold: **{on_hold_count}**"]
+    # Show only action-needed statuses in the overview (stacked)
+    key_statuses = [
+        ("PENDING ARTWORK", "\ud83d\udfe0"),
+        ("NEEDS RESOLUTION", "\ud83d\udfe3"),
+        ("NEEDS REVISION", "\ud83d\udfe3"),
+        ("ON HOLD", "\ud83d\udfe1"),
+    ]
+    s = [f"**\ud83d\udcca Project Overview** | Active Projects: **{total_active}**"]
+    for status_name, emoji in key_statuses:
+        count = sum(v for k, v in status_counts.items() if k.upper() == status_name)
+        if count > 0:
+            s.append(f"  {emoji} {status_name.title()}: **{count}**")
 
     s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
     if waiting_art:
