@@ -354,6 +354,11 @@ def _route_card_target(table_name, assigned_to):
     Hannah tables + Large Client tables -> Master Production
     Everything else -> Lucy Production
     """
+    supplier = (assigned_to or "").strip().lower()
+    if supplier == "hannah":
+        return MASTER_CHAT or FOUNDERS_CHAT
+    if supplier == "lucy":
+        return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
     tname = (table_name or "").lower()
     if "hannah" in tname or any(lc in tname for lc in LARGE_CLIENT_TABLES):
         return MASTER_CHAT or FOUNDERS_CHAT
