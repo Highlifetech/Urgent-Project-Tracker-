@@ -632,9 +632,10 @@ def build_approval_card(order_num, assigned_to, table_id, record_id, table_name=
     action_id = f"approval_resolved_{table_id}_{record_id}"
 
     submitter = assigned_to or "Team"
+    resolved = _is_action_clicked(action_id)
 
     elements = []
-    if image_key:
+    if image_key and not resolved:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     elements.append({"tag": "markdown", "content": f"Brendan,\n\n{submitter} has submitted a request for **{order_num}** to review regarding production. Please reply in the card comments."})
 
@@ -701,9 +702,10 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
     action_id = f"mark_resolved_{table_id}_{record_id}"
 
     names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+    resolved = _is_action_clicked(action_id)
 
     elements = []
-    if image_key:
+    if image_key and not resolved:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
 
@@ -771,9 +773,10 @@ def build_project_update_request_card(order_num, assigned_to, table_id, record_i
     action_id = f"project_update_resolved_{table_id}_{record_id}"
 
     names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+    resolved = _is_action_clicked(action_id)
 
     elements = []
-    if image_key:
+    if image_key and not resolved:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
     elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
 
@@ -1487,12 +1490,20 @@ def handle_card_callback(body):
         order_num = action_value.get("order_num", "")
         tid = action_value.get("table_id", "")
         rid = action_value.get("record_id", "")
+        assigned_to = action_value.get("assigned_to", "")
+        description = action_value.get("description", "")
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
             link = record_link(tid, rid) if tid and rid else ""
             order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
             confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** marked {order_display} as resolved \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
+        try:
+            image_key = action_value.get("image_key", "")
+            updated_card = build_update_team_card(order_num, description, assigned_to, tid, rid, "", image_key)
+            return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}, "card": updated_card}
+        except Exception as e:
+            logger.warning(f"mark_resolved rebuild error: {e}")
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
     if action_str.startswith("project_update_resolved_"):
@@ -1509,6 +1520,13 @@ def handle_card_callback(body):
             order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
             confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Update Request Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the update request for {order_display} \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
+        try:
+            image_key = action_value.get("image_key", "")
+            table_name = action_value.get("table_name", "")
+            updated_card = build_project_update_request_card(order_num, assigned_to, tid, rid, table_name, image_key)
+            return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}, "card": updated_card}
+        except Exception as e:
+            logger.warning(f"project_update_resolved rebuild error: {e}")
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
     if action_str.startswith("approval_resolved_"):
@@ -1518,12 +1536,20 @@ def handle_card_callback(body):
         order_num = action_value.get("order_num", "")
         tid = action_value.get("table_id", "")
         rid = action_value.get("record_id", "")
+        assigned_to = action_value.get("assigned_to", "")
         if FOUNDERS_CHAT:
             now_str = _est_now().strftime("%I:%M %p ET, %b %d")
             link = record_link(tid, rid) if tid and rid else ""
             order_display = f"[{order_num}]({link})" if link else f"**{order_num}**"
             confirm_card = {"config": {"wide_screen_mode": True}, "header": {"title": {"tag": "plain_text", "content": "\u2705 Approval Resolved"}, "template": "green"}, "elements": [{"tag": "markdown", "content": f"**{operator_name}** resolved the approval request for {order_display} \u2014 {now_str}"}]}
             lark.send_card(confirm_card, chat_id=FOUNDERS_CHAT)
+        try:
+            image_key = action_value.get("image_key", "")
+            table_name = action_value.get("table_name", "")
+            updated_card = build_approval_card(order_num, assigned_to, tid, rid, table_name, image_key)
+            return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}, "card": updated_card}
+        except Exception as e:
+            logger.warning(f"approval_resolved rebuild error: {e}")
         return {"toast": {"type": "success", "content": f"Resolved by {operator_name}"}}
 
     if action_str.startswith("request_update_"):
