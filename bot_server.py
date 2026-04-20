@@ -275,8 +275,28 @@ def get_due_date_raw(fields):
     return _get_field(fields, FIELD_DUE_DATE, ALT_DUE_DATE_FIELDS)
 
 
+_view_id_cache = {}
+
+
+def _get_default_view_id(table_id):
+    if table_id in _view_id_cache:
+        return _view_id_cache[table_id]
+    try:
+        views = lark.list_views(table_id) or []
+        if views:
+            vid = views[0].get("view_id", "")
+            _view_id_cache[table_id] = vid
+            return vid
+    except Exception as e:
+        logger.warning(f"get_default_view_id error for {table_id}: {e}")
+    return ""
+
+
 def record_link(table_id, record_id):
-    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&record={record_id}&modal=expand"
+    view_id = _get_default_view_id(table_id)
+    if view_id:
+        return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&view={view_id}&record={record_id}"
+    return f"{LARK_BASE_RECORD_URL}{LARK_BASE_APP_TOKEN}?table={table_id}&record={record_id}"
 
 
 def field_to_text(val):
