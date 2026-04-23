@@ -52,7 +52,7 @@ MASTER_CHAT = os.environ.get("LARK_CHAT_ID_MASTER", "")
 
 HANNAH_OPEN_ID = os.environ.get("HANNAH_OPEN_ID", "ou_42c3063bcfefad67c05c615ba0088146")
 LUCY_OPEN_ID = os.environ.get("LUCY_OPEN_ID", "ou_0f26700382eae7f58ea889b7e98388b4")
-BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "")
+BRENDAN_OPEN_ID = os.environ.get("BRENDAN_OPEN_ID", "__BRENDAN_UNSET__")
 
 LARK_CHAT_ID_BRIEANNE = os.environ.get("LARK_CHAT_ID_BRIEANNE", "")
 
@@ -512,11 +512,13 @@ def _is_excluded_board(table_name):
 
 
 def get_user_name(open_id):
-    if open_id == HANNAH_OPEN_ID:
+    if not open_id:
+        return "Unknown"
+    if HANNAH_OPEN_ID and open_id == HANNAH_OPEN_ID:
         return "Hannah"
-    if open_id == LUCY_OPEN_ID:
+    if LUCY_OPEN_ID and open_id == LUCY_OPEN_ID:
         return "Lucy"
-    if open_id == BRENDAN_OPEN_ID:
+    if BRENDAN_OPEN_ID and BRENDAN_OPEN_ID != "__BRENDAN_UNSET__" and open_id == BRENDAN_OPEN_ID:
         return "Brendan"
     try:
         info = lark._get(f"/open-apis/contact/v3/users/{open_id}", {"user_id_type": "open_id"})
@@ -1484,9 +1486,9 @@ def handle_card_callback(body):
     action_value = action.get("value", {})
     action_str = action_value.get("action", "")
     operator = body.get("operator", {})
-    operator_id = operator.get("open_id", "")
+    operator_id = operator.get("open_id") or operator.get("user_id") or operator.get("union_id") or ""
     operator_name = get_user_name(operator_id)
-    logger.info(f"Card callback: {action_str} by {operator_name}")
+    logger.info(f"Card callback: {action_str} by {operator_name} | operator={operator}")
     if not action_str:
         return {"toast": {"type": "info", "content": "No action"}}
 
