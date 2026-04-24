@@ -1485,10 +1485,13 @@ def handle_card_callback(body):
     action = body.get("action", {})
     action_value = action.get("value", {})
     action_str = action_value.get("action", "")
-    operator = body.get("operator", {})
-    operator_id = operator.get("open_id") or operator.get("user_id") or operator.get("union_id") or ""
+    operator = body.get("operator") or body.get("event", {}).get("operator") or body.get("sender") or {}
+    _sender_id_obj = operator.get("sender_id") if isinstance(operator.get("sender_id"), dict) else {}
+    operator_id = (operator.get("open_id") or operator.get("user_id") or operator.get("union_id") or _sender_id_obj.get("open_id") or _sender_id_obj.get("user_id") or _sender_id_obj.get("union_id") or "")
     operator_name = get_user_name(operator_id)
-    logger.info(f"Card callback: {action_str} by {operator_name} | operator={operator}")
+    logger.info(f"Card callback: {action_str} by {operator_name} | operator={operator} | operator_id='{operator_id}'")
+    if operator_name == "Unknown":
+        logger.warning(f"Card callback UNKNOWN operator — full body keys: {list(body.keys())} | body={body}")
     if not action_str:
         return {"toast": {"type": "info", "content": "No action"}}
 
