@@ -386,19 +386,19 @@ def _route_card_target(table_name, assigned_to):
       - Table name in LARGE_CLIENT_TABLES -> Master Production
       - Anything unrecognized -> Master Production (default)
     """
-    supplier = (assigned_to or "").strip().lower()
-    if supplier == "lucy":
-        return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
-    if supplier in ("hannah", "chen"):
-        return MASTER_CHAT or FOUNDERS_CHAT
     tname = (table_name or "").strip().lower()
+    # Table classification ALWAYS wins over PM/assigned_to.
     if tname.startswith("lucy ") or " lucy " in f" {tname} ":
         return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
-    if tname.startswith("workshop") or "hannah" in tname or "chen" in tname:
+    if tname.startswith("workshop") or "workshop" in tname or "hannah" in tname or "chen" in tname:
         return MASTER_CHAT or FOUNDERS_CHAT
     if any(lc in tname for lc in LARGE_CLIENT_TABLES):
         return MASTER_CHAT or FOUNDERS_CHAT
-    # Default: Master Production (was Lucy — that was the bug)
+    # Fall back to PM/assigned_to only when the table didn't classify.
+    supplier = (assigned_to or "").strip().lower()
+    if supplier == "lucy":
+        return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
+        # Default: Master Production (was Lucy — that was the bug)
     return MASTER_CHAT or FOUNDERS_CHAT
 
 
