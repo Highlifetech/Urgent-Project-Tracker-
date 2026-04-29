@@ -284,7 +284,10 @@ def _get_default_view_id(table_id):
     try:
         views = lark.list_views(table_id) or []
         if views:
-            vid = views[0].get("view_id", "")
+            # Prefer a grid view (so the deep-link opens the record card, not a Kanban/Gallery)
+            grid = next((v for v in views if (v.get("view_type") or v.get("type") or "").lower() == "grid"), None)
+            chosen = grid or views[0]
+            vid = chosen.get("view_id", "")
             _view_id_cache[table_id] = vid
             return vid
     except Exception as e:
@@ -331,6 +334,29 @@ def get_assigned_to(fields):
     return name
 
 
+def get_project_manager(fields):
+    """Read the new "Project Manager" person-picker field and return a normalized
+    name (Hannah / Lucy / Chen / Brendan / "").  Returns "" if the field is not
+    present on the record so callers can fall back to other heuristics.
+    """
+    val = fields.get("Project Manager")
+    if val is None:
+        return ""
+    name = field_to_text(val)
+    if not name:
+        return ""
+    n = name.lower()
+    if "hannah" in n:
+        return "Hannah"
+    if "lucy" in n:
+        return "Lucy"
+    if "chen" in n:
+        return "Chen"
+    if "brendan" in n:
+        return "Brendan"
+    return name
+
+
 def get_assigned_from_table(table_name):
     tname = (table_name or "").lower()
     if "hannah" in tname:
@@ -351,18 +377,29 @@ LARGE_CLIENT_TABLES = [
 
 def _route_card_target(table_name, assigned_to):
     """Determine which chat to send update/request cards to.
-    Hannah tables + Large Client tables -> Master Production
-    Everything else -> Lucy Production
+
+    Routing rules:
+      - PM/assigned == Lucy -> Production (Lucy)
+      - PM/assigned == Hannah or Chen -> Master Production
+      - Table name starts with "Lucy " or contains "lucy " -> Production (Lucy)
+      - Table name starts with "Workshop" / contains "hannah" or "chen" -> Master Production
+      - Table name in LARGE_CLIENT_TABLES -> Master Production
+      - Anything unrecognized -> Master Production (default)
     """
     supplier = (assigned_to or "").strip().lower()
-    if supplier == "hannah":
-        return MASTER_CHAT or FOUNDERS_CHAT
     if supplier == "lucy":
         return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
-    tname = (table_name or "").lower()
-    if "hannah" in tname or any(lc in tname for lc in LARGE_CLIENT_TABLES):
+    if supplier in ("hannah", "chen"):
         return MASTER_CHAT or FOUNDERS_CHAT
-    return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
+    tname = (table_name or "").strip().lower()
+    if tname.startswith("lucy ") or " lucy " in f" {tname} ":
+        return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
+    if tname.startswith("workshop") or "hannah" in tname or "chen" in tname:
+        return MASTER_CHAT or FOUNDERS_CHAT
+    if any(lc in tname for lc in LARGE_CLIENT_TABLES):
+        return MASTER_CHAT or FOUNDERS_CHAT
+    # Default: Master Production (was Lucy — that was the bug)
+    return MASTER_CHAT or FOUNDERS_CHAT
 
 
 def get_image_key_from_field(fields, field_name="Production Artwork"):
@@ -615,6 +652,10 @@ def handle_notify_button(table_id, record_id):
         order_num = get_order_num(fields)
         client = get_client_name(fields)
         assigned_to = get_assigned_to(fields)
+        # New: prefer the explicit "Project Manager" person field if present
+        pm = get_project_manager(fields)
+        if pm and pm != "Brendan":
+            assigned_to = pm
         if assigned_to == "Brendan":
             assigned_to = get_assigned_from_table("")
         image_key = get_image_key_from_field(fields)
@@ -708,13 +749,13 @@ def build_update_team_card(order_num, description, assigned_to, table_id, record
     link = record_link(table_id, record_id)
     action_id = f"mark_resolved_{table_id}_{record_id}"
 
-    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+    names = assigned_to if assigned_to in ("Hannah", "Lucy", "Chen") else "Team"
     resolved = _is_action_clicked(action_id)
 
     elements = []
     if image_key and not resolved:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
-    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
+    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nAn update has been requested on the status of order **{order_num}**. Please provide an update in the project comments."})
 
     view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
@@ -779,13 +820,13 @@ def build_project_update_request_card(order_num, assigned_to, table_id, record_i
     link = record_link(table_id, record_id)
     action_id = f"project_update_resolved_{table_id}_{record_id}"
 
-    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+    names = assigned_to if assigned_to in ("Hannah", "Lucy", "Chen") else "Team"
     resolved = _is_action_clicked(action_id)
 
     elements = []
     if image_key and not resolved:
         elements.append({"tag": "img", "img_key": image_key, "alt": {"tag": "plain_text", "content": "Production Artwork"}})
-    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."})
+    elements.append({"tag": "markdown", "content": f"Hello {names},\n\nAn update has been requested on the status of order **{order_num}**. Please provide an update in the project comments."})
 
     view_record_btn = {"tag": "button", "text": {"tag": "plain_text", "content": "View Record"}, "type": "default", "url": link}
 
@@ -813,6 +854,10 @@ def handle_request_update_button(table_id, record_id):
         fields = record.get("fields", {})
         order_num = get_order_num(fields)
         assigned_to = get_assigned_to(fields)
+        # New: prefer the explicit "Project Manager" person field if present
+        pm = get_project_manager(fields)
+        if pm and pm != "Brendan":
+            assigned_to = pm
         if assigned_to == "Brendan":
             tables = lark.get_all_tables()
             for t in tables:
@@ -1788,7 +1833,7 @@ def _handle_incoming_card(msg, sender):
 
     # Build and send Iron Bot's own card with Mark Resolved button
     action_id = f"mark_resolved_ironbot_{chat_id}_{order_num}_{message_id[-8:]}"
-    names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+    names = assigned_to if assigned_to in ("Hannah", "Lucy", "Chen") else "Team"
 
     add_update_actions = []
     # Try to extract the link from the original card
@@ -1829,7 +1874,7 @@ def _handle_incoming_card(msg, sender):
         "config": {"wide_screen_mode": True},
         "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
         "elements": [
-            {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+            {"tag": "markdown", "content": f"Hello {names},\n\nAn update has been requested on the status of order **{order_num}**. Please provide an update in the project comments."},
             {"tag": "action", "actions": [view_record_btn, resolve_btn]},
         ],
     }
@@ -1924,7 +1969,7 @@ def _poll_update_request_cards():
 
             # Send Iron Bot replacement card (same logic as _handle_incoming_card)
             action_id = f"mark_resolved_ironbot_{chat_id}_{order_num}_{message_id[-8:]}"
-            names = "Hannah and Chen" if assigned_to == "Hannah" else "Lucy" if assigned_to == "Lucy" else "Team"
+            names = assigned_to if assigned_to in ("Hannah", "Lucy", "Chen") else "Team"
 
             record_link_url = ""
             for elem in elements:
@@ -1953,7 +1998,7 @@ def _poll_update_request_cards():
                 "config": {"wide_screen_mode": True},
                 "header": {"title": {"tag": "plain_text", "content": "Project Update Request"}, "template": "purple"},
                 "elements": [
-                    {"tag": "markdown", "content": f"Hello {names},\n\nPlease provide an update on the status of order **{order_num}** in the project comments."},
+                    {"tag": "markdown", "content": f"Hello {names},\n\nAn update has been requested on the status of order **{order_num}**. Please provide an update in the project comments."},
                     {"tag": "action", "actions": [view_record_btn, resolve_btn]},
                 ],
             }
