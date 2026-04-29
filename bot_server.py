@@ -394,10 +394,6 @@ def _route_card_target(table_name, assigned_to):
         return MASTER_CHAT or FOUNDERS_CHAT
     if any(lc in tname for lc in LARGE_CLIENT_TABLES):
         return MASTER_CHAT or FOUNDERS_CHAT
-    # Fall back to PM/assigned_to only when the table didn't classify.
-    supplier = (assigned_to or "").strip().lower()
-    if supplier == "lucy":
-        return LARK_CHAT_ID_LUCY or FOUNDERS_CHAT
         # Default: Master Production (was Lucy — that was the bug)
     return MASTER_CHAT or FOUNDERS_CHAT
 
