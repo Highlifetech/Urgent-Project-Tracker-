@@ -1281,14 +1281,14 @@ def _build_message_summary_card(summary_text, period_label, channel_stats):
 
 def _send_person_summaries(all_channel_msgs, period_label, projects_context=""):
     """Send person-specific message summaries to their production channels.
-    Hannah channels -> Master Production, Lucy channels -> Lucy Production.
+    All person summaries are sent to the Founders channel only.
     """
     HANNAH_PREFIXES = ("Hannah ",)
     LUCY_PREFIXES = ("Lucy ",)
 
     for person, prefixes, target_chat, person_label in [
-        ("Hannah", HANNAH_PREFIXES, MASTER_CHAT, "Hannah"),
-        ("Lucy", LUCY_PREFIXES, LARK_CHAT_ID_LUCY, "Lucy"),
+        ("Hannah", HANNAH_PREFIXES, FOUNDERS_CHAT, "Hannah"),
+        ("Lucy", LUCY_PREFIXES, FOUNDERS_CHAT, "Lucy"),
     ]:
         if not target_chat:
             continue
