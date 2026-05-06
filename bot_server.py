@@ -966,7 +966,7 @@ def build_morning_digest(projects):
 
     # Show only action-needed statuses in the overview (stacked)
     key_statuses = [
-        ("PENDING ARTWORK", "\ud83d\udfe0"),
+        
         ("NEEDS RESOLUTION", "\ud83d\udfe3"),
         ("NEEDS REVISION", "\ud83d\udfe3"),
         ("ON HOLD", "\ud83d\udfe1"),
@@ -977,12 +977,6 @@ def build_morning_digest(projects):
         if count > 0:
             s.append(f"  {emoji} {status_name.title()}: **{count}**")
 
-    s.append(f"\n**\ud83c\udfa8 Need Artwork \u2014 {len(waiting_art)} projects**")
-    if waiting_art:
-        for w in waiting_art:
-            s.append(f"  **{w['order']}** | PENDING ARTWORK | {w['client']} \u2014 {w['board']} - [View]({w['link']})")
-    else:
-        s.append("  No artwork-pending orders. Clear on this front.")
 
     s.append(f"\n**\ud83d\udea8 Overdue \u2014 {len(overdue)} projects**")
     for o in overdue:
