@@ -2560,12 +2560,12 @@ def _start_background_tasks():
         # --- COMBINED 7 AM MORNING BRIEFING (Mon-Sat) ---
         # Mon-Fri: digest + calendar + email.  Sat: digest only.
         # Monday editions include Sunday data.
-        scheduler.add_job(
-            _scheduled_combined_morning_briefing,
-            CronTrigger(hour=7, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
-            id="combined_morning_briefing",
-            replace_existing=True,
-        )
+        # scheduler.add_job(
+        #     _scheduled_combined_morning_briefing,
+        #     CronTrigger(hour=7, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
+        #     id="combined_morning_briefing",
+        #     replace_existing=True,
+        # )
         # --- MIDDAY RECAP 2 PM (Mon-Sat) ---
         scheduler.add_job(
             _scheduled_midday_recap,
@@ -2575,12 +2575,12 @@ def _start_background_tasks():
         )
         # --- EVENING PERSON BRIEFINGS 8 PM (Mon-Sat) ---
         # Hannah -> Master Production, Lucy -> Lucy Production
-        scheduler.add_job(
-            _scheduled_evening_person_briefings,
-            CronTrigger(hour=20, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
-            id="evening_person_briefings",
-            replace_existing=True,
-        )
+        # scheduler.add_job(
+        #     _scheduled_evening_person_briefings,
+        #     CronTrigger(hour=20, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
+        #     id="evening_person_briefings",
+        #     replace_existing=True,
+        # )
         scheduler.start()
         logger.info("APScheduler started: combined morning 7AM + afternoon 2PM + evening person 8PM ET, Mon-Sat")
     except Exception as e:
