@@ -2567,13 +2567,13 @@ def _start_background_tasks():
         #     replace_existing=True,
         # )
         # --- MIDDAY RECAP 2 PM (Mon-Sat) ---
-        scheduler.add_job(
-            _scheduled_midday_recap,
-            CronTrigger(hour=14, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
-            id="midday_recap",
-            replace_existing=True,  # v4.13
-        )
-        # --- EVENING PERSON BRIEFINGS 8 PM (Mon-Sat) ---
+        # scheduler.add_job(
+        #     _scheduled_midday_recap,
+        #     CronTrigger(hour=14, minute=0, day_of_week="mon-sat", timezone=ZoneInfo("America/New_York")),
+        #     id="midday_recap",
+        #     replace_existing=True,  # v4.13
+        # )
+        # # --- EVENING PERSON BRIEFINGS 8 PM (Mon-Sat) ---
         # Hannah -> Master Production, Lucy -> Lucy Production
         # scheduler.add_job(
         #     _scheduled_evening_person_briefings,
